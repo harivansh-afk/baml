@@ -1,0 +1,37 @@
+# e2e surface for the ix first-class runner control plane. Two fast jobs:
+# parallel spawn (job + headroom), checkout through the node20 shim, and
+# enough tool probes to prove the platform template's userland.
+name: ix-e2e
+on:
+  workflow_dispatch:
+  push:
+    branches: [canary]
+    paths: [.github/workflows/ix-e2e.yml]
+
+jobs:
+  smoke:
+    runs-on: ["ix"]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: host facts
+        run: |
+          uname -a
+          nproc
+          df -h / /tmp
+      - name: userland probes
+        run: |
+          git --version
+          jq --version
+          gcc --version | head -1
+          make --version | head -1
+          python3 --version
+  smoke-2:
+    runs-on: ["ix"]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: quick io
+        run: |
+          head -c 64M /dev/urandom > /tmp/blob
+          sha256sum /tmp/blob
