@@ -1,6 +1,6 @@
 # MIR to Rust
 
-This backend generates resumable Rust bodies for BAML functions. The existing BEX runtime owns their invocation, heap, scheduling, errors and telemetry. Bytecode remains the development interpreter, the implementation of unsupported functions, and the executor for runtime-compiled code.
+This backend generates Rust bodies for BAML functions. Entry from the runtime remains resumable; bounded scalar calls between generated bodies use named Rust functions. The existing BEX runtime owns their invocation, heap, scheduling, errors and telemetry. Bytecode remains the development interpreter, the implementation of unsupported functions, and the executor for runtime-compiled code.
 
 ```
 checked BAML -> MIR -> bytecode -> interpreter
@@ -28,7 +28,19 @@ There is no separate `bex_native` runtime. The prototype's integer helpers now h
 
 A generated body owns typed locals and a continuation. `resume` returns `Return`, `Call` or `Yield`, or a runtime error. The VM drives calls and suspension; Rust's call stack never stores a suspended BAML caller. Recursion therefore uses BAML's existing frame limit.
 
-`BamlFrame` owns the common invocation state. Its execution state selects bytecode or a compiled body. Compiled BAML functions retain BAML identity and observation rules; they are distinct from hidden Rust builtins. Both backends use the same successful-return and exception-unwind machinery.
+`BamlFrame` owns the common invocation state. Its execution state selects bytecode or a compiled body. Compiled BAML functions retain BAML identity and observation rules; they are distinct from hidden Rust builtins. Both backends share logical completion and exception-unwind rules. Bytecode retains its specialized in-place return housekeeping.
+
+## Direct-call experiment
+
+`direct.rs` conservatively selects scalar functions with acyclic control flow and an acyclic eligible call graph. A region is limited to 256 work units (local slots plus MIR statements/terminators, including all transitive calls), 16 calls deep and 128 locals per function. Branches are summed rather than choosing a path. These limits bound generated work between the existing cooperative checks; they are not a wall-clock latency guarantee. Heap-valued functions, loops, recursion and calls to unsupported functions remain resumable. A looping or array-using caller can still call an eligible scalar callee directly.
+
+Generated `direct_*` functions use typed Rust parameters, locals and results. They have no boxed continuation or heap argument vector. They still use `CompiledRuntime` entry/exit hooks to retain a logical BAML frame, check the existing stack limit and record telemetry. Hooks do not dispatch a body, park or yield. This path is active with telemetry enabled; it does not hide calls or disable captures. `native-support.txt` includes the per-function eligibility and exclusion reason.
+
+On error, direct activations leave their logical frames and deepest source site for the existing unwinder. On success, their result stays in Rust storage and their metadata is popped without touching the evaluation stack. Bindings are checked against the installed descriptor before entering a direct body.
+
+During `resume`, the owning boxed state is temporarily held outside the frame vector so hooks can grow that vector safely. The heap permit stays active throughout; state is restored before any GC handoff or error materialization. Direct regions contain only scalars. The yield checker is cloned once per resume and its exact counter restored afterward, keeping loop checks statically callable while avoiding overlapping mutable borrows of the VM. This adds flag-reference refcount work per resume and must be included in measurements.
+
+Both entry shapes reuse the same MIR operation emitter. Admission is established before call-graph specialization, so a rejected callee cannot accidentally get a direct entry point. The bounded helper and resumable entry currently duplicate generated body code; measure binary/build size as well as execution time. Runtime hooks, global/descriptor checks, logical metadata and telemetry costs remain. This branch establishes an experiment, not a speedup claim.
 
 Arguments remain rooted on the eval stack until a compiled body takes ownership. `RootHaver` exposes and forwards array references owned by suspended compiled state. Array locals hold BEX references, so copying or passing an array preserves its identity without copying its contents. Allocating an array creates a new object through the VM's existing TLAB.
 
@@ -67,12 +79,12 @@ The current host links the full runtime, including runtime compilation. Neither 
 
 The differential suite builds generated Rust and runs it through the real engine. It checks arithmetic boundaries, evaluation order, control flow, recursion, fallback, errors and actual compiled execution. Array cases require every named target to compile and execute, and check allocation, returned arrays, alias-visible mutation, rebinding and error order. The array-contract fixture forces real moving collections with arrays rooted only by generated state, collects while a compiled caller is suspended, and exercises mixed calls, spawn and sustained allocation. The engine-contract fixture checks cancellation, cleanup shielding, logical call relationships, explicit captures, and recorded source locations through the recorder/reader. Separate VM tests exercise state-only roots, forced loop yields, stale bindings and hidden continuation failures.
 
-On the checked 64-bit build without `heap_debug`, the common frame is 128 bytes (previously 112). Each compiled activation has one state allocation; calls currently construct argument vectors and return through the VM. These costs are explicit. Rust can optimize inside a resume body and visible arithmetic helpers, but native-to-native calls do not yet become direct inlinable Rust calls.
+On the previously checked 64-bit build without `heap_debug`, the common frame was 128 bytes (previously 112). Resumable entries retain a state allocation and general calls construct argument vectors. Eligible direct callees avoid those allocations and expose concrete Rust calls, but keep logical BAML metadata. Remeasure layout, generated code and execution on this branch before attributing a performance change.
 
 Before making this the default release backend:
 
 1. Measure optimized execution, call boundaries, allocation, build/startup time, binary size and telemetry modes on the same programs. Inspect generated assembly before assuming block dispatch disappears.
 2. Extend heap operations beyond integer arrays through existing access guards and barriers, and add liveness-aware roots. Preserve object identity and distinguish parameter rebinding from object mutation.
 3. Admit handlers, closures and generics only with their full runtime contracts and differential cases.
-4. Add a bounded direct-call optimization that preserves logical frames, error sites, stack limits and cooperative checkpoints. Keep the resumable path as its semantic reference.
+4. Measure the bounded direct-call experiment against the corrected resumable baseline, including GC latency and telemetry modes. Keep the resumable path as its semantic reference; widen eligibility only with a new safety argument.
 5. Design capability-based runtime pruning and versioned runtime-source distribution. An absence of source-level reflection alone is not proof that LTO can discard the compiler or interpreter.

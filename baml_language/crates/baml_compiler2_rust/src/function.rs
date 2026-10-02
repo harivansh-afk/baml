@@ -24,6 +24,7 @@ pub(crate) fn emit<'db>(
     candidate: &crate::Candidate<'db>,
     calls: &ResolvedCalls<'db>,
     source: &str,
+    direct: &HashMap<FunctionRef<'db>, crate::direct::Target>,
 ) -> Result<String> {
     let crate::Candidate {
         arity,
@@ -54,6 +55,8 @@ pub(crate) fn emit<'db>(
         types,
         callees,
         initialized: Vec::new(),
+        direct,
+        resumable: true,
     };
     let mut out =
         format!("\nstruct Frame{id} {{ block: usize, site: usize, waiting: Option<usize>,\n");
@@ -82,7 +85,7 @@ pub(crate) fn emit<'db>(
     out.push_str("    }\n}\n");
     let _ = writeln!(
         out,
-        "impl CompiledFrame for Frame{id} {{\n    fn site(&self) -> usize {{ self.site }}\n    fn resume(&mut self, input: ResumeInput, poll: &mut EarlyYieldCheck, heap: &mut dyn CompiledHeap) -> Result<CompiledAction, VmRustFnError> {{"
+        "impl CompiledFrame for Frame{id} {{\n    fn site(&self) -> usize {{ self.site }}\n    fn resume(&mut self, input: ResumeInput, poll: &mut EarlyYieldCheck, runtime: &mut dyn CompiledRuntime) -> Result<CompiledAction, VmRustFnError> {{"
     );
     out.push_str("        match (self.waiting.take(), input) {\n            (None, ResumeInput::Continue) => {},\n            (Some(call), ResumeInput::Returned(_value)) => match call {\n");
     for (block, state) in body.blocks.iter().zip(&states) {
@@ -159,7 +162,7 @@ pub(crate) fn emit<'db>(
     out.push_str("                _ => return Err(VmInternalError::InvalidCompiledCode { message: \"unknown compiled block\".into() }.into()),\n            }\n        }\n    }\n}\n");
     let _ = writeln!(
         out,
-        "fn create_{id}(args: &[Value], heap: &dyn CompiledHeap) -> Result<Box<dyn CompiledFrame>, VmInternalError> {{\n    if args.len() != {arity} {{ return Err(VmInternalError::InvalidArgumentCount {{ expected: {arity}, got: args.len() }}); }}\n    Ok(Box::new(Frame{id} {{ block: {}, site: 0, waiting: None,",
+        "fn create_{id}(args: &[Value], runtime: &dyn CompiledHeap) -> Result<Box<dyn CompiledFrame>, VmInternalError> {{\n    if args.len() != {arity} {{ return Err(VmInternalError::InvalidArgumentCount {{ expected: {arity}, got: args.len() }}); }}\n    Ok(Box::new(Frame{id} {{ block: {}, site: 0, waiting: None,",
         body.entry.0
     );
     for (i, ty) in types.iter().enumerate() {
@@ -179,6 +182,95 @@ pub(crate) fn emit<'db>(
         let _ = writeln!(out, "    {entry},");
     }
     out.push_str("] };\n");
+    Ok(out)
+}
+
+/// Emit ordinary typed Rust locals and calls for a proven finite scalar region.
+/// Statement semantics and call lowering are shared with the resumable emitter.
+pub(crate) fn emit_direct<'db>(
+    target: &crate::direct::Target,
+    candidate: &crate::Candidate<'db>,
+    calls: &ResolvedCalls<'db>,
+    direct: &HashMap<FunctionRef<'db>, crate::direct::Target>,
+) -> Result<String> {
+    let id = target.object;
+    let types = &candidate.types;
+    let result_ty = types[0];
+    let mut emitter = Emitter {
+        types,
+        callees: &calls.ids,
+        initialized: Vec::new(),
+        direct,
+        resumable: false,
+    };
+    let parameters = target
+        .parameters
+        .iter()
+        .enumerate()
+        .map(|(i, ty)| format!("mut _{}: {}", i + 1, ty.rust()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let arguments = target
+        .parameters
+        .iter()
+        .enumerate()
+        .map(|(i, ty)| ty.value(&format!("_{}", i + 1)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut out = format!(
+        "\n#[allow(unused_mut, unused_variables, unused_assignments)]\nfn direct_{id}(runtime: &mut dyn CompiledRuntime, caller_site: usize, {parameters}) -> Result<{}, VmRustFnError> {{\n    runtime.enter_direct(caller_site, {}, &CODE_{id}, &[{arguments}])?;\n",
+        result_ty.rust(),
+        target.global,
+    );
+    for (i, ty) in types.iter().enumerate() {
+        if !(1..=candidate.arity).contains(&i) {
+            let _ = writeln!(out, "    let mut _{i}: {} = {};", ty.rust(), ty.zero());
+        }
+    }
+    let _ = writeln!(
+        out,
+        "    let mut block = {};\n    let mut site = 0;\n    let result = (|| -> Result<{}, VmRustFnError> {{\n        loop {{ match block {{",
+        candidate.body.entry.0,
+        result_ty.rust()
+    );
+    let states =
+        initialized_on_entry(candidate.body, candidate.arity).map_err(Rejection::invalid)?;
+    // CODE_id uses this same reachable-block/statement/terminator order. Site
+    // zero is entry; direct execution must use the same source coordinates.
+    let mut next_site = 1;
+    for (block, state) in candidate.body.blocks.iter().zip(states) {
+        let Some(state) = state else {
+            continue;
+        };
+        emitter.initialized = state;
+        let _ = writeln!(out, "            {} => {{", block.id.0);
+        for statement in &block.statements {
+            let _ = writeln!(out, "                site = {next_site};");
+            next_site += 1;
+            if let Some(line) = emitter.statement(&statement.kind)? {
+                let _ = writeln!(out, "                {line}");
+            }
+        }
+        let _ = writeln!(out, "                site = {next_site};");
+        next_site += 1;
+        for line in emitter.terminator(
+            block.terminator.as_ref().expect("admitted terminator"),
+            block.id,
+        )? {
+            let _ = writeln!(out, "                {line}");
+        }
+        out.push_str("            }\n");
+    }
+    out.push_str("            _ => return Err(VmInternalError::InvalidCompiledCode { message: \"unknown direct block\".into() }.into()),\n        }}\n    })();\n    match result {\n");
+    let _ = writeln!(
+        out,
+        "        Ok(value) => {{ runtime.return_direct({})?; Ok(value) }},",
+        result_ty.value("value")
+    );
+    let _ = writeln!(
+        out,
+        "        Err(error) => {{ runtime.fail_direct(&CODE_{id}, site); Err(error) }},\n    }}\n}}"
+    );
     Ok(out)
 }
 
@@ -209,9 +301,29 @@ struct Emitter<'a, 'db> {
     types: &'a [NativeType],
     callees: &'a HashMap<FunctionRef<'db>, usize>,
     initialized: Vec<bool>,
+    direct: &'a HashMap<FunctionRef<'db>, crate::direct::Target>,
+    resumable: bool,
 }
 
 impl<'db> Emitter<'_, 'db> {
+    fn local_name(&self, local: Local) -> String {
+        format!(
+            "{}_{index}",
+            if self.resumable { "self." } else { "" },
+            index = local.0
+        )
+    }
+    fn block_name(&self) -> &'static str {
+        if self.resumable {
+            "self.block"
+        } else {
+            "block"
+        }
+    }
+    fn site_name(&self) -> &'static str {
+        if self.resumable { "self.site" } else { "site" }
+    }
+
     fn statement(&mut self, kind: &StatementKind<'db>) -> Result<Option<String>> {
         match kind {
             StatementKind::Assign { destination, value } => {
@@ -220,7 +332,7 @@ impl<'db> Emitter<'_, 'db> {
                     Place::Local(local) => {
                         self.expect(*local, ty)?;
                         self.initialized[local.0] = true;
-                        Ok(Some(format!("self._{} = {expr};", local.0)))
+                        Ok(Some(format!("{} = {expr};", self.local_name(*local))))
                     }
                     Place::Index {
                         base,
@@ -234,7 +346,7 @@ impl<'db> Emitter<'_, 'db> {
                         let index = self.place_of(&Place::Local(*index), NativeType::Int)?;
                         // MIR evaluates the RHS before storing into its destination.
                         Ok(Some(format!(
-                            "let value = {expr}; heap.int_array_set({array}, {index}, value)?;"
+                            "let value = {expr}; runtime.int_array_set({array}, {index}, value)?;"
                         )))
                     }
                     _ => Err(Rejection::unsupported(format!("place {destination}"))),
@@ -252,8 +364,9 @@ impl<'db> Emitter<'_, 'db> {
     }
 
     fn terminator(&self, term: &Terminator<'db>, block: BlockId) -> Result<Vec<String>> {
+        let block_name = self.block_name();
         let line = match term {
-            Terminator::Goto { target } => format!("self.block = {};", target.0),
+            Terminator::Goto { target } => format!("{block_name} = {};", target.0),
             Terminator::Branch {
                 condition,
                 then_block,
@@ -261,7 +374,7 @@ impl<'db> Emitter<'_, 'db> {
             } => {
                 let condition = self.operand_of(condition, NativeType::Bool)?;
                 format!(
-                    "self.block = if {condition} {{ {} }} else {{ {} }};",
+                    "{block_name} = if {condition} {{ {} }} else {{ {} }};",
                     then_block.0, else_block.0
                 )
             }
@@ -273,7 +386,7 @@ impl<'db> Emitter<'_, 'db> {
             } => {
                 let discriminant = self.operand_of(discriminant, NativeType::Int)?;
                 let mut seen = Vec::new();
-                let mut out = format!("self.block = match ({discriminant}).get() {{ ");
+                let mut out = format!("{block_name} = match ({discriminant}).get() {{ ");
                 for (key, target) in arms {
                     let SwitchKey::Int(key) = key else {
                         return Err(Rejection::unsupported("non-integer switch"));
@@ -288,30 +401,65 @@ impl<'db> Emitter<'_, 'db> {
             }
             Terminator::Return => {
                 let ty = self.read(Local(0))?;
-                format!(
-                    "return Ok(CompiledAction::Return({}));",
-                    ty.value("self._0")
-                )
+                if self.resumable {
+                    format!(
+                        "return Ok(CompiledAction::Return({}));",
+                        ty.value("self._0")
+                    )
+                } else {
+                    format!("return Ok({});", self.local_name(Local(0)))
+                }
             }
             Terminator::Unreachable => "return Err(VmPanic::Unreachable.into());".into(),
-            Terminator::Call { args, .. } => {
+            Terminator::Call {
+                args,
+                destination,
+                target: continuation,
+                ..
+            } => {
                 let callee = direct_callee(term).map_err(Rejection::unsupported)?;
-                let target = self
-                    .callees
-                    .get(&callee)
-                    .ok_or_else(|| Rejection::invalid("unbound direct call"))?;
-                let args = args
-                    .iter()
-                    .map(|arg| {
-                        let (value, ty) = self.operand(arg)?;
-                        Ok(ty.value(&value))
-                    })
-                    .collect::<Result<Vec<_>>>()?
-                    .join(", ");
-                format!(
-                    "self.waiting = Some({}); return Ok(CompiledAction::Call {{ target: {target}, args: vec![{args}] }});",
-                    block.0
-                )
+                if let Some(target) = self.direct.get(&callee) {
+                    if args.len() != target.parameters.len() {
+                        return Err(Rejection::invalid("direct call signature mismatch"));
+                    }
+                    let args = args
+                        .iter()
+                        .zip(&target.parameters)
+                        .map(|(arg, ty)| self.operand_of(arg, *ty))
+                        .collect::<Result<Vec<_>>>()?
+                        .join(", ");
+                    let destination = local_place(destination)?;
+                    self.expect(destination, target.result)?;
+                    format!(
+                        "{} = direct_{}(runtime, {}, {args})?; {block_name} = {};",
+                        self.local_name(destination),
+                        target.object,
+                        self.site_name(),
+                        continuation.0
+                    )
+                } else {
+                    if !self.resumable {
+                        return Err(Rejection::invalid(
+                            "direct body calls a non-direct function",
+                        ));
+                    }
+                    let target = self
+                        .callees
+                        .get(&callee)
+                        .ok_or_else(|| Rejection::invalid("unbound direct call"))?;
+                    let args = args
+                        .iter()
+                        .map(|arg| {
+                            let (value, ty) = self.operand(arg)?;
+                            Ok(ty.value(&value))
+                        })
+                        .collect::<Result<Vec<_>>>()?
+                        .join(", ");
+                    format!(
+                        "self.waiting = Some({}); return Ok(CompiledAction::Call {{ target: {target}, args: vec![{args}] }});",
+                        block.0
+                    )
+                }
             }
             Terminator::ShortCircuit {
                 operand,
@@ -323,8 +471,12 @@ impl<'db> Emitter<'_, 'db> {
                 let value = self.operand_of(operand, NativeType::Bool)?;
                 let dest = local_place(destination)?;
                 self.expect(dest, NativeType::Bool)?;
-                let short = format!("self._{} = {value}; self.block = {};", dest.0, join.0);
-                let long = format!("self.block = {};", eval_rhs.0);
+                let short = format!(
+                    "{} = {value}; {block_name} = {};",
+                    self.local_name(dest),
+                    join.0
+                );
+                let long = format!("{block_name} = {};", eval_rhs.0);
                 match kind {
                     ShortCircuitKind::And => format!("if {value} {{ {long} }} else {{ {short} }}"),
                     ShortCircuitKind::Or => format!("if {value} {{ {short} }} else {{ {long} }}"),
@@ -346,11 +498,11 @@ impl<'db> Emitter<'_, 'db> {
                     .map(|value| self.operand_of(value, Int))
                     .collect::<Result<Vec<_>>>()?
                     .join(", ");
-                Ok((format!("heap.alloc_int_array(vec![{values}])"), IntArray))
+                Ok((format!("runtime.alloc_int_array(vec![{values}])"), IntArray))
             }
             Rvalue::Len(place) => {
                 let array = self.place_of(place, IntArray)?;
-                Ok((format!("heap.int_array_len({array})?"), Int))
+                Ok((format!("runtime.int_array_len({array})?"), Int))
             }
             Rvalue::UnaryOp { op, operand } => {
                 let (value, ty) = self.operand(operand)?;
@@ -409,7 +561,7 @@ impl<'db> Emitter<'_, 'db> {
     }
     fn place(&self, place: &Place) -> Result<(String, NativeType)> {
         match place {
-            Place::Local(local) => Ok((format!("self._{}", local.0), self.read(*local)?)),
+            Place::Local(local) => Ok((self.local_name(*local), self.read(*local)?)),
             Place::Index {
                 base,
                 index,
@@ -418,7 +570,7 @@ impl<'db> Emitter<'_, 'db> {
                 let array = self.place_of(base, NativeType::IntArray)?;
                 let index = self.place_of(&Place::Local(*index), NativeType::Int)?;
                 Ok((
-                    format!("heap.int_array_get({array}, {index})?"),
+                    format!("runtime.int_array_get({array}, {index})?"),
                     NativeType::Int,
                 ))
             }
@@ -552,7 +704,7 @@ fn initialized_on_entry(
 
 /// Each successor of a supported terminator, with the local it assigns on the
 /// way there.
-fn successors(
+pub(crate) fn successors(
     terminator: &Terminator<'_>,
 ) -> std::result::Result<Vec<(BlockId, Option<Local>)>, String> {
     Ok(match terminator {
@@ -653,6 +805,8 @@ mod tests {
             types: &[NativeType::Bool; 3],
             callees: &callees,
             initialized: states[1].clone().unwrap(),
+            direct: &HashMap::new(),
+            resumable: true,
         };
         assert!(matches!(emitter.read(Local(2)), Err(Rejection::Invalid(_))));
     }

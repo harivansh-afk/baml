@@ -18,6 +18,7 @@ use baml_compiler2_mir::{
 use baml_type::{Literal, RuntimeTy};
 use bex_vm_types::{ConstValue, Program};
 
+mod direct;
 mod function;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,7 +57,7 @@ impl NativeType {
         match self {
             Self::Int => format!("compiled::read_int({value})?"),
             Self::Bool => format!("compiled::read_bool({value})?"),
-            Self::IntArray => format!("heap.check_int_array({value})?"),
+            Self::IntArray => format!("runtime.check_int_array({value})?"),
         }
     }
     fn value(self, value: &str) -> String {
@@ -74,6 +75,24 @@ pub struct NativeModule {
     /// Linked object indices that have generated implementations.
     pub compiled: Vec<usize>,
     pub fallback: Vec<Unsupported>,
+    /// Direct-call eligibility for each admitted native function.
+    pub direct_calls: Vec<DirectSupport>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirectSupport {
+    pub function: String,
+    pub eligible: bool,
+    pub reason: String,
+}
+
+struct Admitted<'db> {
+    loc: FunctionLoc<'db>,
+    name: String,
+    object: usize,
+    global: usize,
+    candidate: Candidate<'db>,
+    calls: function::ResolvedCalls<'db>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -179,15 +198,16 @@ pub fn emit_module<'db>(
         Ok((slot.raw(), object.raw()))
     };
     let mut source = String::from(
-        "#[allow(unused_imports)]\nuse bex_vm_types::{compiled::{self, CompiledAction, CompiledCode, CompiledFrame, CompiledHeap, CompiledSite, ResumeInput, SiteKind}, errors::{VmInternalError, VmPanic, VmRustFnError}, int::{self, Int63}, EarlyYieldCheck, HeapPtr, RootHaver, Value};\nuse std::collections::HashMap;\n",
+        "#[allow(unused_imports)]\nuse bex_vm_types::{compiled::{self, CompiledAction, CompiledCode, CompiledFrame, CompiledHeap, CompiledRuntime, CompiledSite, ResumeInput, SiteKind}, errors::{VmInternalError, VmPanic, VmRustFnError}, int::{self, Int63}, EarlyYieldCheck, HeapPtr, RootHaver, Value};\nuse std::collections::HashMap;\n",
     );
     let mut compiled = Vec::new();
     let mut fallback = Vec::new();
+    let mut admitted = Vec::new();
     for &loc in functions {
         let name = function_data(db, loc).name.to_string();
         let result = (|| {
             let candidate = candidate(db, loc)?;
-            let (_, object) = resolve(DeclRef::Source(loc))?;
+            let (global, object) = resolve(DeclRef::Source(loc))?;
             if compiled.contains(&object) {
                 return Err(Rejection::invalid("duplicate source candidate"));
             }
@@ -204,13 +224,28 @@ pub fn emit_module<'db>(
                 }
             }
             let calls = function::ResolvedCalls { ids: calls, slots };
-            let emitted = function::emit(object, &candidate, &calls, loc.file(db).text(db))?;
-            Ok((object, emitted))
+            // Establish normal admission before call-graph specialization. A
+            // callee rejected by emission must never gain a direct entry point.
+            function::emit(
+                object,
+                &candidate,
+                &calls,
+                loc.file(db).text(db),
+                &HashMap::new(),
+            )?;
+            Ok((object, global, candidate, calls))
         })();
         match result {
-            Ok((object, emitted)) => {
+            Ok((object, global, candidate, calls)) => {
                 compiled.push(object);
-                source.push_str(&emitted);
+                admitted.push(Admitted {
+                    loc,
+                    name,
+                    object,
+                    global,
+                    candidate,
+                    calls,
+                });
             }
             Err(Rejection::Unsupported(reason)) => fallback.push(Unsupported {
                 function: name,
@@ -222,6 +257,31 @@ pub fn emit_module<'db>(
                     reason,
                 });
             }
+        }
+    }
+    let (targets, direct_calls) = direct::analyze(&admitted);
+    for function in &admitted {
+        let emit_error = |error: Rejection| CompileError {
+            function: function.name.clone(),
+            reason: match error {
+                Rejection::Unsupported(reason) | Rejection::Invalid(reason) => reason,
+            },
+        };
+        source.push_str(
+            &function::emit(
+                function.object,
+                &function.candidate,
+                &function.calls,
+                function.loc.file(db).text(db),
+                &targets,
+            )
+            .map_err(emit_error)?,
+        );
+        if let Some(target) = targets.get(&DeclRef::Source(function.loc)) {
+            source.push_str(
+                &function::emit_direct(target, &function.candidate, &function.calls, &targets)
+                    .map_err(emit_error)?,
+            );
         }
     }
     let fingerprint =
@@ -239,6 +299,7 @@ pub fn emit_module<'db>(
         source,
         compiled,
         fallback,
+        direct_calls,
     })
 }
 

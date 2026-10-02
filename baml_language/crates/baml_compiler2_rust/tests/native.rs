@@ -200,6 +200,119 @@ fn admission_is_per_function_and_recursion_uses_baml_frames() {
     );
 }
 
+#[test]
+fn direct_admission_requires_bounded_scalar_call_regions() {
+    let mut source = String::from(
+        r#"
+        function leaf(x: int) -> int { x + 1 }
+        function pair(x: int) -> int { leaf(leaf(x)) }
+        function branch(x: int) -> int { if (x > 0) { leaf(x) } else { leaf(-x) } }
+        function looped(x: int) -> int { while (x > 0) { x -= 1; } leaf(x) }
+        function heap(x: int[]) -> int { leaf(x[0]) }
+        function left(x: int) -> int { if (x == 0) { 0 } else { right(x - 1) } }
+        function right(x: int) -> int { left(x) }
+        function sleeping(x: int) -> int { baml.sys.sleep(baml.time.Duration.from_milliseconds(1n)); x }
+        function mixed(x: int) -> int { sleeping(x) }
+    "#,
+    );
+    for i in 0..18 {
+        let callee = if i == 0 {
+            "leaf".to_owned()
+        } else {
+            format!("chain{}", i - 1)
+        };
+        writeln!(source, "function chain{i}(x: int) -> int {{ {callee}(x) }}").unwrap();
+    }
+    for i in 0..8 {
+        let callee = if i == 0 {
+            "leaf".to_owned()
+        } else {
+            format!("wide{}", i - 1)
+        };
+        writeln!(
+            source,
+            "function wide{i}(x: int) -> int {{ {callee}(x) + {callee}(x) }}"
+        )
+        .unwrap();
+    }
+    let db = checked_db(&source);
+    let image = linked(&db);
+    let functions = candidates(&db);
+    let module = emit_module(&db, &image.program, &image.package_roots, &functions).unwrap();
+    let direct = |name: &str| {
+        module
+            .direct_calls
+            .iter()
+            .find(|f| f.function == name)
+            .unwrap()
+            .eligible
+    };
+    for name in ["leaf", "pair", "branch"] {
+        assert!(direct(name), "{name}");
+    }
+    for name in [
+        "looped", "heap", "left", "right", "mixed", "chain17", "wide7",
+    ] {
+        assert!(!direct(name), "{name} must keep cooperative execution");
+    }
+    let mut reversed = functions;
+    reversed.reverse();
+    let reversed = emit_module(&db, &image.program, &image.package_roots, &reversed).unwrap();
+    for entry in &module.direct_calls {
+        assert_eq!(
+            Some(entry),
+            reversed
+                .direct_calls
+                .iter()
+                .find(|f| f.function == entry.function)
+        );
+    }
+    let leaf = image.program.rendered_callables()["user.leaf"].object.raw();
+    let direct_body = module
+        .source
+        .split(&format!("fn direct_{leaf}("))
+        .nth(1)
+        .unwrap()
+        .split("\nstruct Frame")
+        .next()
+        .unwrap();
+    assert!(direct_body.contains("runtime.enter_direct"));
+    assert!(!direct_body.contains("CompiledAction::Call"));
+    assert!(!direct_body.contains("Box::new"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn direct_calls_preserve_stack_limits_and_error_chains() {
+    agree(
+        "direct_limits",
+        r#"
+        function leaf(x: int) -> int { 10 / x }
+        function middle(x: int) -> int { leaf(x) + 1 }
+        function direct(x: int) -> int { middle(x) * 2 }
+        function caught(x: int) -> int {
+            { direct(x) } catch (e) { baml.panics.DivisionByZero => 99 }
+        }
+        function descend(n: int) -> int {
+            if (n == 0) { middle(1) } else { descend(n - 1) }
+        }
+    "#,
+        &[
+            ("direct", vec![vec![Int(0)], vec![Int(2)]]),
+            ("caught", vec![vec![Int(0)], vec![Int(2)]]),
+            (
+                "descend",
+                vec![
+                    vec![Int(250)],
+                    vec![Int(253)],
+                    vec![Int(254)],
+                    vec![Int(256)],
+                ],
+            ),
+        ],
+    )
+    .await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn mixed_calls_and_errors() {
     agree(
@@ -626,9 +739,27 @@ fn generated_code_preserves_engine_contract() {
         "expected scalar callers/callees, got {:?}",
         module.fallback
     );
+    for name in [
+        "compiled_leaf",
+        "direct_middle",
+        "direct_entry",
+        "fail",
+        "fail_middle",
+    ] {
+        assert!(
+            module
+                .direct_calls
+                .iter()
+                .any(|f| f.function == name && f.eligible),
+            "{name} did not get direct code"
+        );
+    }
+    let instrumented = module.source.replace(
+        "runtime.enter_direct(",
+        "DIRECT_ENTRIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed); runtime.enter_direct(",
+    );
     let native = format!(
-        "mod generated {{\n{}\n}}\nconst BAML: &str = {source:?};\n{}",
-        module.source,
+        "mod generated {{\npub static DIRECT_ENTRIES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);\n{instrumented}\n}}\nconst BAML: &str = {source:?};\n{}",
         include_str!("support/engine_contract.rs")
     );
     assert_eq!(

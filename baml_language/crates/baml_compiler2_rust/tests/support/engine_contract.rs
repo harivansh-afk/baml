@@ -44,6 +44,10 @@ async fn run(image: &bex_vm_types::Program, compiled: bool) -> Vec<String> {
         .unwrap(),
     );
     let metadata = engine.program_metadata().await;
+    assert_eq!(engine.call_function("user.direct_entry", vec![External::Int(4)], context(), true)
+        .await.unwrap(), External::Int(14));
+    assert_eq!(engine.call_function("user.captured_direct", vec![External::Int(4)], context(), true)
+        .await.unwrap(), External::Int(14));
     assert_eq!(
         metadata
             .function_table
@@ -144,6 +148,10 @@ async fn run(image: &bex_vm_types::Program, compiled: bool) -> Vec<String> {
         External::Int(7)
     );
     engine.shutdown().await;
+    if compiled {
+        assert!(generated::DIRECT_ENTRIES.load(Ordering::Relaxed) >= 6,
+            "telemetry-enabled execution must actually use direct calls");
+    }
     assert_eq!(engine.telemetry_result(), Some(Ok(())));
 
     let mut functions = HashMap::new();
@@ -192,6 +200,7 @@ async fn run(image: &bex_vm_types::Program, compiled: bool) -> Vec<String> {
     assert_eq!(saw_compiled_version, compiled);
     let mut invocations = Vec::new();
     let mut captured = false;
+    let mut captured_direct = false;
     for completion in &completions {
         let path = &paths[&((completion.node >> 1) as u32)];
         let function = &functions[&path.callee_function_id];
@@ -220,11 +229,18 @@ async fn run(image: &bex_vm_types::Program, compiled: bool) -> Vec<String> {
                 announcements[&completion.id].inputs_cas_id, completion.value_cas_id
             ));
         }
+        if function.fqn == "user.direct_entry"
+            && announcements.get(&completion.id).is_some_and(|a| a.inputs_cas_id.is_some())
+            && completion.value_cas_id.is_some()
+        {
+            captured_direct = true;
+        }
     }
     assert!(
         captured,
         "explicit captures must survive compiled entry/return"
     );
+    assert!(captured_direct, "direct call chains must preserve explicit captures");
     let fail_line = BAML
         .lines()
         .position(|line| line.starts_with("function fail("))
