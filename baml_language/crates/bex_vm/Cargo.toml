@@ -77,6 +77,8 @@ baml_builtins2_codegen = { workspace = true }
 
 [dev-dependencies]
 baml_test_support = { workspace = true }
+borsh = { workspace = true }
+baml_db = { workspace = true }
 indexmap = { workspace = true }
 
 [features]

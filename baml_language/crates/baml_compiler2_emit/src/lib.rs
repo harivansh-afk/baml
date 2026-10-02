@@ -39,6 +39,7 @@ use bex_vm_types::{
 };
 pub(crate) use emit::compile_mir_function;
 pub use package::{emit_package, emit_session_submission};
+pub use refs::function_address;
 
 /// Is `name` spelled under a language package? Such a function is a builtin
 /// whatever file it comes from.
@@ -1121,6 +1122,7 @@ fn builtin_emit_function(
         kind,
         telemetry_function_id: None,
         telemetry_registration: bex_vm_types::FunctionRegistration::default(),
+        compiled: None,
         telemetry_policy_id: bex_vm_types::TelemetryPolicyId::none(),
         local_names: Vec::new(),
         debug_locals: Vec::new(),

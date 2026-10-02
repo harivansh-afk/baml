@@ -50,3 +50,24 @@ fn throw_of_a_call_result_keeps_its_statement_sequence_point() {
     assert_eq!(&SOURCE[entry.span.range], "throw make_error()");
     assert!(entry.sequence_point, "throw lost its sequence point");
 }
+
+#[test]
+fn arithmetic_line_does_not_depend_on_operand_pull_sequence_points() {
+    let source = "function divide(n: int) -> int {\n    let numerator = 10;\n    numerator /\n        n\n}\n";
+    let program = convert_program(compile_source(source)).unwrap();
+    let compact = function(&program, "user.divide")
+        .bytecode
+        .compact
+        .as_ref()
+        .unwrap();
+    let mut pc = 0;
+    while pc < compact.code.len() {
+        let op = OpCode::try_from(compact.code[pc]).unwrap();
+        if op == OpCode::DivInt {
+            assert_eq!(compact.source_line_for_pc(pc), 3);
+            return;
+        }
+        pc += op.encoded_size();
+    }
+    panic!("division was not emitted");
+}

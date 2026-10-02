@@ -257,6 +257,25 @@ The parser produces a **CST** (Concrete Syntax Tree), which is a lossless, error
 - Optimization levels (`OptLevel`)
 - Bytecode verification
 
+### Rust Generation
+
+**Crate:** `baml_compiler2_rust`
+
+Reads the same checked MIR and generates resumable Rust bodies for supported
+functions. Unsupported functions retain bytecode. The program driver retains
+its exact source-root-to-linked-package mapping; both backends use the emitter's
+structured declaration coordinates when binding calls.
+
+Generated bodies execute through the BEX runtime's shared `BamlFrame` lifecycle.
+The runtime owns calls, suspension, GC coordination, errors and telemetry. A
+compiled source-site coordinate is distinct from a bytecode offset or a resume
+block number. The Rust backend does not introduce a second heap or scheduler.
+
+`baml pack --emit-rust-project` emits a program-specific Cargo project against
+an explicit runtime-source checkout. The subset, ownership boundaries,
+validation contract and remaining optimization work are documented in
+[`baml_compiler2_rust/README.md`](crates/baml_compiler2_rust/README.md).
+
 ---
 
 ## Query-Based Architecture (Salsa)

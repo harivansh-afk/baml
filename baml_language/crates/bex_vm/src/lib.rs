@@ -42,6 +42,6 @@ pub use errors::{StackFrame, VmPanic, format_traceback};
 pub use indexable::EvalStack;
 pub use package_baml::NativeFunction;
 pub use vm::{
-    BexVm, BytecodeFrame, BytecodeProgram, Frame, VmEventSourceLocation, VmExecState,
-    convert_program, prepare_compact_code,
+    BamlFrame, BexVm, BytecodeProgram, Frame, VmEventSourceLocation, VmExecState, convert_program,
+    prepare_compact_code,
 };

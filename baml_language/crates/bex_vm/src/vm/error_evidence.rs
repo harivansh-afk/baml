@@ -193,6 +193,12 @@ impl BexVm {
         if entry == RaiseEntry::Host {
             return RaiseKind::HostBoundary;
         }
+        if let Some(code) = function.and_then(|function| function.compiled.as_ref()) {
+            return match code.sites.get(self.cur_pc).map(|site| site.kind) {
+                Some(bex_vm_types::compiled::SiteKind::Call) => RaiseKind::NativeBoundary,
+                _ => RaiseKind::Runtime,
+            };
+        }
         let opcode = function
             .and_then(|function| function.bytecode.compact.as_ref()?.code.get(self.cur_pc))
             .and_then(|byte| OpCode::try_from(*byte).ok());
@@ -237,7 +243,7 @@ impl BexVm {
             .frames
             .iter()
             .enumerate()
-            .filter(|(_, frame)| matches!(frame, Frame::Bytecode(_)))
+            .filter(|(_, frame)| matches!(frame, Frame::Baml(_)))
             .map(|(depth, _)| (depth, self.frame_telemetry_function(depth)))
             .collect();
         let stack = &self.stack.0;
@@ -291,7 +297,7 @@ impl BexVm {
             })
             .take(MAX_ERROR_FRAMES)
             .map(|idx| match &self.frames[idx] {
-                Frame::Bytecode(frame) => ErrorFrame {
+                Frame::Baml(frame) => ErrorFrame {
                     function: self.frame_registered_function(idx),
                     pc: Some(if Some(idx) == raise_frame {
                         self.cur_pc
@@ -322,7 +328,7 @@ impl BexVm {
     /// just walked; never a function object.
     fn stack_is_observed(&self) -> bool {
         self.frames.iter().all(|frame| match frame {
-            Frame::Bytecode(frame) => frame.telemetry.is_some(),
+            Frame::Baml(frame) => frame.telemetry.is_some(),
             Frame::Native(_) => true,
         })
     }
@@ -361,7 +367,7 @@ impl BexVm {
         let raise_frame = self
             .frames
             .iter()
-            .rposition(|frame| matches!(frame, Frame::Bytecode(_)));
+            .rposition(|frame| matches!(frame, Frame::Baml(_)));
         let raise_function = match (raise_frame, current) {
             (Some(frame), Some((idx, function))) if frame == idx => Some(function),
             // SAFETY: the bytecode frame roots its function under the permit.
@@ -388,7 +394,7 @@ impl BexVm {
             _ => RaiseOrigin::Fresh,
         };
         let raise_telemetry = raise_frame.and_then(|idx| match &self.frames[idx] {
-            Frame::Bytecode(frame) => frame.telemetry,
+            Frame::Baml(frame) => frame.telemetry,
             Frame::Native(_) => None,
         });
         // An observed raise frame owns the active call path, and defining

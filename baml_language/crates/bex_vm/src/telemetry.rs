@@ -2281,6 +2281,7 @@ mod tests {
                     .unwrap(),
             ),
             telemetry_registration: bex_vm_types::FunctionRegistration::default(),
+            compiled: None,
             telemetry_policy_id: btel_types::TelemetryPolicyId::none(),
             local_names: Vec::new(),
             debug_locals: Vec::new(),
@@ -2484,12 +2485,14 @@ mod tests {
     #[cfg(target_pointer_width = "64")]
     #[test]
     fn vm_frame_sizes_stay_within_budget() {
-        // Heap-debug adds an epoch to HeapPtr; the rest of each frame stays fixed.
+        // Heap-debug adds an epoch to HeapPtr. Backend execution state adds
+        // sixteen bytes over the former bytecode-only frame; compiled state
+        // itself has one allocation, rather than a second boxed wrapper.
         let pointer_bytes = size_of::<HeapPtr>();
         assert!(matches!(pointer_bytes, 8 | 16));
-        assert_eq!(size_of::<crate::vm::BytecodeFrame>(), 104 + pointer_bytes);
+        assert_eq!(size_of::<crate::vm::BamlFrame>(), 120 + pointer_bytes);
         assert_eq!(size_of::<crate::vm::NativeFrame>(), 24 + pointer_bytes);
-        assert_eq!(size_of::<crate::vm::Frame>(), 104 + pointer_bytes);
+        assert_eq!(size_of::<crate::vm::Frame>(), 120 + pointer_bytes);
     }
 
     #[test]

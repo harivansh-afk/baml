@@ -12,12 +12,14 @@
 
 pub mod bytecode;
 pub mod cancellation;
+pub mod compiled;
 pub mod errors;
 pub mod float_order;
 pub mod head_walk;
 pub mod heap_ptr;
 pub mod identity;
 pub mod indexable;
+pub mod int;
 pub mod lazy_biased_mutex;
 pub mod limit;
 pub mod media;

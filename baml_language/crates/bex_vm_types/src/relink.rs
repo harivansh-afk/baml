@@ -367,6 +367,7 @@ mod tests {
             kind: FunctionKind::Bytecode,
             telemetry_function_id: None,
             telemetry_registration: crate::FunctionRegistration::default(),
+            compiled: None,
             telemetry_policy_id: crate::TelemetryPolicyId::none(),
             local_names: Vec::new(),
             debug_locals: Vec::new(),

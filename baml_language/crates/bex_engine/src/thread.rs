@@ -215,22 +215,34 @@ impl BexThread {
             .vm
             .frames
             .iter()
-            .rposition(|frame| matches!(frame, bex_vm::Frame::Bytecode(_)));
+            .rposition(|frame| matches!(frame, bex_vm::Frame::Baml(_)));
         self.vm
             .frames
             .iter()
             .enumerate()
             .rev()
             .any(|(index, frame)| {
-                let bex_vm::Frame::Bytecode(frame) = frame else {
+                let bex_vm::Frame::Baml(frame) = frame else {
                     return false;
                 };
+                let function = self.frame_function(frame.function);
+                // A compiled callee still inherits every enclosing BAML
+                // frame's shielding. Its own admitted body has no defer.
+                if function.compiled.is_some() {
+                    return false;
+                }
                 let pc = if Some(index) == innermost {
                     self.vm.cur_pc
                 } else {
-                    frame.instruction_ptr.checked_sub(1).unwrap_or_else(|| {
-                        unreachable!("an outer bytecode frame has executed its call instruction")
-                    })
+                    frame
+                        .bytecode_pc()
+                        .expect("interpreted frame")
+                        .checked_sub(1)
+                        .unwrap_or_else(|| {
+                            unreachable!(
+                                "an outer bytecode frame has executed its call instruction"
+                            )
+                        })
                 };
                 let function = self.frame_function(frame.function);
                 match &function.bytecode.compact {
