@@ -165,6 +165,7 @@ pub use types::{
 /// - For single-threaded targets, it always returns `true` after a certain number of increments.
 /// - For multi-threaded targets, it checks an atomic flag every `N` increments. If the flag is set, it returns `true`.
 ///   The flag should be set by another thread that wants to park the VM.
+#[derive(Clone)]
 pub struct EarlyYieldCheck {
     gc_pressure: Option<::std::sync::Arc<::std::sync::atomic::AtomicBool>>,
     counter: u64,

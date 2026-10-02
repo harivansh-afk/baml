@@ -92,6 +92,16 @@ pub(crate) fn write(
         use std::fmt::Write as _;
         let _ = writeln!(report, "{}: {}", fallback.function, fallback.reason);
     }
+    report.push_str("\nNative-to-native call eligibility (entry from the VM remains resumable):\n");
+    for direct in &module.direct_calls {
+        use std::fmt::Write as _;
+        let mode = if direct.eligible {
+            "direct"
+        } else {
+            "resumable"
+        };
+        let _ = writeln!(report, "{}: {mode}: {}", direct.function, direct.reason);
+    }
     // Creating a new directory refuses every existing path before any writes.
     std::fs::create_dir(directory)
         .with_context(|| format!("cannot create new Rust project {}", directory.display()))?;

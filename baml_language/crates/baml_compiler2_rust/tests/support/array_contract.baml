@@ -1,8 +1,9 @@
+function scalar_step(n: int) -> int { n + 1 }
 function allocated_loop(n: int) -> int[] {
     let a = [n, n + 1];
     let alias = a;
     let i = 0;
-    while (i < 10) { i += 1; }
+    while (i < 10) { i = scalar_step(i); }
     alias[0] += 1;
     a
 }

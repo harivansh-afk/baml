@@ -64,7 +64,7 @@ impl CompiledFrame for Sum {
         &mut self,
         input: ResumeInput,
         poll: &mut EarlyYieldCheck,
-        _: &mut dyn CompiledHeap,
+        _: &mut dyn CompiledRuntime,
     ) -> Result<CompiledAction, VmRustFnError> {
         assert!(matches!(input, ResumeInput::Continue));
         while self.remaining > 0 {
@@ -126,7 +126,7 @@ impl CompiledFrame for Hold {
         &mut self,
         _: ResumeInput,
         _: &mut EarlyYieldCheck,
-        _: &mut dyn CompiledHeap,
+        _: &mut dyn CompiledRuntime,
     ) -> Result<CompiledAction, VmRustFnError> {
         if !std::mem::replace(&mut self.parked, true) {
             Ok(CompiledAction::Yield)
@@ -219,7 +219,7 @@ impl CompiledFrame for Seven {
         &mut self,
         _: ResumeInput,
         _: &mut EarlyYieldCheck,
-        _: &mut dyn CompiledHeap,
+        _: &mut dyn CompiledRuntime,
     ) -> Result<CompiledAction, VmRustFnError> {
         Ok(CompiledAction::Return(Value::int(7)))
     }

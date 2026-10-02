@@ -72,6 +72,25 @@ pub trait CompiledHeap {
     ) -> Result<(), VmRustFnError>;
 }
 
+/// Services available while generated code holds the VM's heap permit.
+/// Direct calls keep their locals on the Rust stack; these hooks retain only
+/// logical BAML invocation metadata. They never park or run another body.
+pub trait CompiledRuntime: CompiledHeap {
+    fn enter_direct(
+        &mut self,
+        caller_site: usize,
+        global: usize,
+        code: &'static CompiledCode,
+        args: &[Value],
+    ) -> Result<(), VmRustFnError>;
+
+    fn return_direct(&mut self, result: Value) -> Result<(), VmRustFnError>;
+
+    /// Leave failed activations for the existing BAML unwinder. A parent must
+    /// not overwrite a deeper callee's faulting site while propagating an error.
+    fn fail_direct(&mut self, code: &'static CompiledCode, site: usize);
+}
+
 /// State retained while a compiled BAML invocation is suspended. Every heap
 /// reference in that state must participate in `RootHaver`, including state
 /// retained while a bytecode callee executes.
@@ -80,7 +99,7 @@ pub trait CompiledFrame: RootHaver {
         &mut self,
         input: ResumeInput,
         poll: &mut EarlyYieldCheck,
-        heap: &mut dyn CompiledHeap,
+        runtime: &mut dyn CompiledRuntime,
     ) -> Result<CompiledAction, VmRustFnError>;
 
     /// Exact source site of the current operation, distinct from resume state.
