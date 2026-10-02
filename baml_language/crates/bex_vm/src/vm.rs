@@ -186,6 +186,7 @@ struct StaticVirtualCallTarget {
 /// Bytecode call frame — pushed when entering a bytecode function.
 #[derive(Clone, Debug)]
 pub struct BytecodeFrame {
+    _size_probe_padding: [u8; 16],
     /// Pointer to the running function (or closure) object.
     pub function: HeapPtr,
     /// Instruction pointer (IP). Points to the next instruction.
@@ -4150,6 +4151,7 @@ impl BexVm {
                 };
                 self.stack.extend(args.iter().copied());
                 self.frames.push(Frame::Bytecode(BytecodeFrame {
+                    _size_probe_padding: [0; 16],
                     function: dispatch_ptr,
                     instruction_ptr: 0,
                     locals_offset: StackIndex::from_raw(0),
@@ -4315,6 +4317,7 @@ impl BexVm {
         // Synthetic `$entry::` wrapper frame; the wrapped native/sysop emits
         // its own pair through the normal Call/SysOp instruction paths.
         self.frames.push(Frame::Bytecode(BytecodeFrame {
+            _size_probe_padding: [0; 16],
             function: entry_ptr,
             instruction_ptr: 0,
             locals_offset: StackIndex::from_raw(0),
@@ -4394,6 +4397,7 @@ impl BexVm {
         };
         let entry_ptr = self.tlab.alloc(Object::Function(Box::new(entry_function)));
         self.frames.push(Frame::Bytecode(BytecodeFrame {
+            _size_probe_padding: [0; 16],
             function: entry_ptr,
             instruction_ptr: 0,
             locals_offset: StackIndex::from_raw(0),
@@ -6347,6 +6351,7 @@ impl BexVm {
                 // directly into the vector instead of moved through a temporary.
                 self.frames.extend(std::iter::once_with(|| {
                     Frame::Bytecode(BytecodeFrame {
+                        _size_probe_padding: [0; 16],
                         function: callee_ptr,
                         instruction_ptr: 0,
                         locals_offset,
@@ -8353,6 +8358,7 @@ impl BexVm {
                                 caller.faulting_pc = self.cur_pc;
                                 self.frames.extend(std::iter::once_with(|| {
                                     Frame::Bytecode(BytecodeFrame {
+                                        _size_probe_padding: [0; 16],
                                         function: callee_ptr,
                                         instruction_ptr: 0,
                                         locals_offset,
@@ -10391,3 +10397,6 @@ impl TlabHolder for BexVm {
         &mut self.tlab
     }
 }
+
+#[cfg(all(target_pointer_width = "64", not(feature = "heap_debug")))]
+const _: () = { assert!(std::mem::size_of::<BytecodeFrame>() == 128); assert!(std::mem::size_of::<Frame>() == 128); };
