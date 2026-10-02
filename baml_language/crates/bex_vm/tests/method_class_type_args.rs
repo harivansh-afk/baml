@@ -49,6 +49,7 @@ fn inject_function(
         kind: FunctionKind::Bytecode,
         telemetry_function_id: None,
         telemetry_registration: bex_vm_types::FunctionRegistration::default(),
+        compiled: None,
         telemetry_policy_id: bex_vm_types::TelemetryPolicyId::none(),
         local_names: vec![],
         debug_locals: vec![],
@@ -229,7 +230,7 @@ fn method_frame_type_args_seeded_with_class_type_args() {
     {
         use bex_vm::Frame;
         let frame = vm.frames.last_mut().expect("entry frame");
-        if let Frame::Bytecode(bf) = frame {
+        if let Frame::Baml(bf) = frame {
             bf.type_args = vec![RealizedTy::int()]; // receiver.class_type_args = [int]
         } else {
             panic!("entry frame should be Bytecode");
@@ -280,7 +281,7 @@ fn method_frame_type_args_seeded_string() {
     {
         use bex_vm::Frame;
         let frame = vm.frames.last_mut().expect("entry frame");
-        if let Frame::Bytecode(bf) = frame {
+        if let Frame::Baml(bf) = frame {
             bf.type_args = vec![RealizedTy::string()];
         }
     }

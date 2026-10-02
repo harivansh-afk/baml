@@ -675,6 +675,7 @@ dependencies = [
  "anyhow",
  "baml_artifact",
  "baml_builtins2",
+ "baml_compiler2_rust",
  "baml_db",
  "baml_exec",
  "baml_fmt",
@@ -828,6 +829,29 @@ dependencies = [
  "salsa",
  "smol_str",
  "subenum",
+]
+
+[[package]]
+name = "baml_compiler2_rust"
+version = "0.0.0-beta"
+dependencies = [
+ "baml_base",
+ "baml_compiler2_emit",
+ "baml_compiler2_hir",
+ "baml_compiler2_hir_ty",
+ "baml_compiler2_mir",
+ "baml_compiler_diagnostics",
+ "baml_db",
+ "baml_tests",
+ "baml_type",
+ "bex_engine",
+ "bex_vm_types",
+ "borsh",
+ "sys_native",
+ "sys_ops",
+ "sys_types",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]
@@ -1512,6 +1536,7 @@ dependencies = [
  "bex_heap",
  "bex_str",
  "bex_vm_types",
+ "borsh",
  "btel_clock",
  "btel_processor",
  "btel_records",

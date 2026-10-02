@@ -94,14 +94,16 @@ pub(super) fn fold_constants(body: &mut MirFunctionBody<'_>, arity: usize) {
 }
 
 fn fold<'db>(value: &Rvalue<'db>) -> Option<Constant<'db>> {
-    let int = |value| baml_type::Int63::new(value).map(|n| Constant::Int(n.get()));
+    let int = |value: baml_type::Int63| Some(Constant::Int(value.get()));
     match value {
         Rvalue::UnaryOp {
             op,
             operand: Operand::Constant(arg),
         } => match (op, arg) {
             (UnaryOp::Not, Constant::Bool(value)) => Some(Constant::Bool(!value)),
-            (UnaryOp::Neg, Constant::Int(value)) => int(value.checked_neg()?),
+            (UnaryOp::Neg, Constant::Int(value)) => {
+                int(baml_type::Int63::new(*value)?.checked_neg()?)
+            }
             (UnaryOp::Neg, Constant::Float(value)) if value.is_finite() => {
                 Some(Constant::Float(-value))
             }
@@ -120,19 +122,23 @@ fn fold<'db>(value: &Rvalue<'db>) -> Option<Constant<'db>> {
             left: Operand::Constant(left),
             right: Operand::Constant(right),
         } => match (left, right) {
-            (Constant::Int(a), Constant::Int(b)) => match op {
-                BinOp::Add => int(a.checked_add(*b)?),
-                BinOp::Sub => int(a.checked_sub(*b)?),
-                BinOp::Mul => int(a.checked_mul(*b)?),
-                BinOp::Div => int(a.checked_div(*b)?),
-                BinOp::Mod => int(a.checked_rem(*b)?),
-                BinOp::BitAnd => int(a & b),
-                BinOp::BitOr => int(a | b),
-                BinOp::BitXor => int(a ^ b),
-                BinOp::Shl => int(baml_type::Int63::new(*a)?.shift_left(*b).ok()?.get()),
-                BinOp::Shr => int(baml_type::Int63::new(*a)?.shift_right(*b).ok()?.get()),
-                _ => compare(*op, a, b).map(Constant::Bool),
-            },
+            (Constant::Int(a), Constant::Int(b)) => {
+                let a = baml_type::Int63::new(*a)?;
+                let b = baml_type::Int63::new(*b)?;
+                match op {
+                    BinOp::Add => int(a.checked_add(b)?),
+                    BinOp::Sub => int(a.checked_sub(b)?),
+                    BinOp::Mul => int(a.checked_mul(b)?),
+                    BinOp::Div => int(a.checked_div(b)?),
+                    BinOp::Mod => int(a.checked_rem(b)?),
+                    BinOp::BitAnd => int(a.bit_and(b)),
+                    BinOp::BitOr => int(a.bit_or(b)),
+                    BinOp::BitXor => int(a.bit_xor(b)),
+                    BinOp::Shl => int(a.shift_left(b.get()).ok()?),
+                    BinOp::Shr => int(a.shift_right(b.get()).ok()?),
+                    _ => compare(*op, &a, &b).map(Constant::Bool),
+                }
+            }
             (Constant::Float(a), Constant::Float(b)) if a.is_finite() && b.is_finite() => {
                 if let Some(value) = compare(*op, a, b) {
                     return Some(Constant::Bool(value));

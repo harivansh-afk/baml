@@ -73,6 +73,7 @@ wasm-bindgen-futures = { workspace = true }
 baml_builtins2_codegen = { workspace = true }
 
 [dev-dependencies]
+borsh = { workspace = true }
 baml_db = { workspace = true }
 indexmap = { workspace = true }
 

@@ -41,6 +41,7 @@ pub(crate) mod query_command;
 pub mod reporter;
 pub(crate) mod run_command;
 pub(crate) mod runtime_telemetry;
+mod rust_project;
 pub(crate) mod shutdown;
 pub(crate) mod skill_check;
 pub(crate) mod telemetry;

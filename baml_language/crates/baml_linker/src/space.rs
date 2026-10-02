@@ -253,6 +253,11 @@ impl OperandSpace for TailSpace<'_> {
 /// head into the tag its declaration is assigned, and solve every type
 /// switch the object carries over those tags.
 pub(super) fn relocate(object: &mut Object, space: &impl OperandSpace) -> Result<(), LinkError> {
+    if let Object::Function(function) = object {
+        // Process-local generated code binds absolute slots in its old image.
+        // Relinking retains the portable body and requires fresh native code.
+        function.compiled = None;
+    }
     // A type switch states keys, and each declaration key names a type
     // declaration — checked while the keys are still unit operands, before
     // the walk below rewrites them.

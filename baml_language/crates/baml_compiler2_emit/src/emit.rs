@@ -877,6 +877,7 @@ impl<'db: 'ctx, 'ctx, 'obj, 'w> StackifyCodegen<'db, 'ctx, 'obj, 'w> {
             kind: FunctionKind::Bytecode,
             telemetry_function_id: None,
             telemetry_registration: bex_vm_types::FunctionRegistration::default(),
+            compiled: None,
             telemetry_policy_id: bex_vm_types::TelemetryPolicyId::none(),
             local_names: self.slot_names,
             debug_locals,
@@ -947,54 +948,6 @@ impl<'db: 'ctx, 'ctx, 'obj, 'w> StackifyCodegen<'db, 'ctx, 'obj, 'w> {
         self.bytecode.instructions.len()
     }
 
-    /// Convert a byte offset to a 1-indexed line number.
-    fn offset_to_line(&self, offset: u32) -> usize {
-        match self.line_starts.binary_search(&offset) {
-            Ok(idx) => idx + 1,
-            Err(idx) => idx,
-        }
-    }
-
-    /// Normalize a span start offset to avoid leading-newline attribution.
-    ///
-    /// Some statement spans start at the newline byte preceding the real token.
-    /// If `start + 1` is a known line start, prefer that offset.
-    fn normalize_span_start_offset(&self, start: u32) -> u32 {
-        if self.line_starts.binary_search(&(start + 1)).is_ok() {
-            start + 1
-        } else {
-            start
-        }
-    }
-
-    /// Convert a source span to a display line number.
-    ///
-    /// Sequence points (statement/terminator boundaries) use normalized start
-    /// lines. Non-sequence expression entries fall back to end-line attribution
-    /// when a span crosses lines, which avoids collapsing multiline operand
-    /// spans to the previous line.
-    fn span_to_line(&self, span: Span, sequence_point: bool) -> usize {
-        let start: u32 = span.range.start().into();
-        let start = self.normalize_span_start_offset(start);
-        let start_line = self.offset_to_line(start);
-
-        if sequence_point {
-            return start_line;
-        }
-
-        let start_u32: u32 = span.range.start().into();
-        let end_u32: u32 = span.range.end().into();
-        if end_u32 > start_u32 {
-            let end_minus_one = end_u32 - 1;
-            let end_line = self.offset_to_line(end_minus_one);
-            if end_line > start_line && end_line - start_line <= 1 {
-                return end_line;
-            }
-        }
-
-        start_line
-    }
-
     /// Set the current debug span used for subsequent emitted instructions.
     fn set_debug_span(&mut self, span: Option<Span>, sequence_point: bool) {
         self.current_debug_span = span;
@@ -1020,7 +973,7 @@ impl<'db: 'ctx, 'ctx, 'obj, 'w> StackifyCodegen<'db, 'ctx, 'obj, 'w> {
         };
 
         if must_emit {
-            let line = self.span_to_line(span, self.pending_sequence_point);
+            let line = span.start_line(self.line_starts);
             let discriminator = if self.pending_sequence_point {
                 let counter = self.next_line_discriminator.entry(line).or_insert(0);
                 let out = *counter;

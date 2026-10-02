@@ -140,6 +140,22 @@ impl Span {
         Span { file_id, range }
     }
 
+    /// One-based source line, independent of backend instruction selection.
+    /// `line_starts` contains sorted byte offsets, including zero. A span
+    /// beginning at the newline immediately before its token uses that token's
+    /// line, matching statement attribution. Empty tables have no source line.
+    pub fn start_line(self, line_starts: &[u32]) -> usize {
+        let start = u32::from(self.range.start());
+        let start = start
+            .checked_add(1)
+            .filter(|next| line_starts.binary_search(next).is_ok())
+            .unwrap_or(start);
+        match line_starts.binary_search(&start) {
+            Ok(index) => index + 1,
+            Err(index) => index,
+        }
+    }
+
     /// Create a fake span for testing or when no real span is available.
     ///
     /// Uses a sentinel `FileId` (`u32::MAX`) that's unlikely to conflict with real files.
@@ -340,4 +356,29 @@ pub enum Severity {
     Error,
     Warning,
     Info,
+}
+
+#[cfg(test)]
+mod span_line_tests {
+    use super::*;
+
+    #[test]
+    fn source_line_uses_the_start_not_the_expression_end() {
+        let starts = [0, 4, 8];
+        let span = |start, end| {
+            Span::new(
+                FileId::new(0),
+                TextRange::new(TextSize::new(start), TextSize::new(end)),
+            )
+        };
+        assert_eq!(span(1, 7).start_line(&starts), 1);
+        assert_eq!(span(4, 11).start_line(&starts), 2);
+        assert_eq!(
+            span(3, 7).start_line(&starts),
+            2,
+            "leading newline belongs to the following token"
+        );
+        assert_eq!(span(0, 0).start_line(&[]), 0);
+        assert_eq!(span(u32::MAX, u32::MAX).start_line(&starts), 3);
+    }
 }

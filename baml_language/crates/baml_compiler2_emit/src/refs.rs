@@ -43,6 +43,29 @@ use crate::items::{impl_rule_target, owns_no_slot};
 
 // ── Declaration coordinates ──────────────────────────────────────────────────
 
+/// The declaration identity through which a linked program exposes a callable.
+/// Shared by code backends; rendered function names are never binding keys.
+pub fn function_address<'db>(
+    db: &'db dyn crate::Db,
+    function: FunctionRef<'db>,
+) -> Option<(SourceRoot, DeclPath)> {
+    match function {
+        DeclRef::Source(function) => {
+            if owns_no_slot(db, function) {
+                return None;
+            }
+            Some((
+                file_package(db, function.file(db)).root,
+                function_path(db, function),
+            ))
+        }
+        DeclRef::External(function) => match function.addr(db) {
+            ExternRowAddr::Declared(_) => Some(extern_function_coords(db, function)),
+            ExternRowAddr::ImplProvided { .. } => None,
+        },
+    }
+}
+
 /// The tag field a declaration object carries in a unit: its own operand,
 /// exactly what every head naming it carries, until the linker or grafter
 /// assigns the real tag.

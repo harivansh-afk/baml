@@ -247,6 +247,9 @@ pub enum VmInternalError {
     #[error("invalid compact opcode byte: {0}")]
     InvalidOpcode(u8),
 
+    #[error("invalid compiled BAML code: {message}")]
+    InvalidCompiledCode { message: String },
+
     /// `StoreGlobal` was executed outside of an `$init` function. Globals are
     /// frozen post-`$init` (shared as `Arc<[Value]>` across VMs) and any
     /// post-init `StoreGlobal` violates that invariant.

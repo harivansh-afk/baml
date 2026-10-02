@@ -235,7 +235,11 @@ impl RecordingBuilder {
         let mut file = proto::RecordingFile {
             header: Some(proto::RecordingHeader {
                 format_major: encoding::FORMAT_MAJOR,
-                format_minor: self.buffer.spans.format_minor(),
+                format_minor: self
+                    .buffer
+                    .spans
+                    .format_minor()
+                    .max(self.buffer.functions.required_minor()),
                 recording_id: self.id.as_bytes().to_vec(),
                 source_snapshot_id: self.source_snapshot_id.map(|id| id.to_vec()),
                 process_id: self.process.as_ref().map(|p| p.info.process_id.to_vec()),

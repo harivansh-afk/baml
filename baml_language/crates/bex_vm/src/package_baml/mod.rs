@@ -366,7 +366,7 @@ const VM_NATIVE_PACKAGES: &[(&str, NativeResolver)] = &[
 /// wire up, and fail only if actually called.
 pub fn attach_builtins(object: Object) -> Result<Object, VmInternalError> {
     Ok(match object {
-        Object::Function(function) => {
+        Object::Function(mut function) => {
             let kind = match function.kind {
                 bex_vm_types::FunctionKind::Bytecode => bex_vm_types::FunctionKind::Bytecode,
                 bex_vm_types::FunctionKind::SysOp(op) => bex_vm_types::FunctionKind::SysOp(op),
@@ -410,37 +410,10 @@ pub fn attach_builtins(object: Object) -> Result<Object, VmInternalError> {
                 }
                 bex_vm_types::FunctionKind::Native(ptr) => bex_vm_types::FunctionKind::Native(ptr),
             };
-            Object::Function(Box::new(bex_vm_types::Function {
-                name: function.name,
-                source_file: function.source_file,
-                docstring: function.docstring,
-                declared_name: function.declared_name,
-                arity: function.arity,
-                real_local_count: function.real_local_count,
-                bytecode: function.bytecode,
-                kind,
-                telemetry_function_id: None,
-                telemetry_registration: bex_vm_types::FunctionRegistration::default(),
-                telemetry_policy_id: function.telemetry_policy_id,
-                local_names: function.local_names,
-                debug_locals: function.debug_locals,
-                span: function.span,
-                return_type: function.return_type,
-                param_names: function.param_names,
-                param_types: function.param_types,
-                param_has_default: function.param_has_default,
-                display_type_params: function.display_type_params,
-                generic_param_bounds: function.generic_param_bounds,
-                display_param_types: function.display_param_types,
-                display_return_type: function.display_return_type,
-                throws_type: function.throws_type,
-                origin: function.origin,
-                is_interface_body: function.is_interface_body,
-                native_key: function.native_key,
-                body_meta: function.body_meta,
-
-                runtime_package: function.runtime_package,
-            }))
+            function.kind = kind;
+            function.telemetry_function_id = None;
+            function.telemetry_registration = bex_vm_types::FunctionRegistration::default();
+            Object::Function(function)
         }
         other => other,
     })

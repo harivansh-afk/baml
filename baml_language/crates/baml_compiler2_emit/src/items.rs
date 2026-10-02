@@ -1071,6 +1071,7 @@ fn synthesized_function(name: String, bytecode: Bytecode) -> Function {
         kind: FunctionKind::Bytecode,
         telemetry_function_id: None,
         telemetry_registration: bex_vm_types::FunctionRegistration::default(),
+        compiled: None,
         telemetry_policy_id: bex_vm_types::TelemetryPolicyId::none(),
         local_names: Vec::new(),
         debug_locals: Vec::new(),

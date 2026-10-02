@@ -32,3 +32,5 @@ pub const LOG_FORMAT_MINOR: u32 = 5;
 /// Spawned futures record when their body began running (`ThreadRunning`),
 /// apart from when they were scheduled.
 pub const THREAD_RUNNING_FORMAT_MINOR: u32 = 6;
+/// Compiled BAML function definitions and exact source-site coordinates.
+pub const COMPILED_FORMAT_MINOR: u32 = 7;

@@ -57,21 +57,6 @@ use crate::{BexVm, errors::VmRustFnError};
 
 // ── shared helpers ──────────────────────────────────────────────────────────
 
-/// Encode a checked `int` result, or the catchable `baml.panics.IntegerOverflow`
-/// the int opcodes throw (B-266). `checked` is `None` on i64 overflow (only `*`
-/// can produce that from i63 operands); the `Value::try_int` range check then
-/// catches results (like `INT_MIN / -1` = 2^62) that fit i64 but not a tagged
-/// i63. Mirrors `BexVm::int_arith_result` / `finish_int`, message included.
-fn checked_int(checked: Option<i64>, l: i64, op: char, r: i64) -> Result<i64, VmRustFnError> {
-    match checked {
-        Some(v) if Value::try_int(v).is_some() => Ok(v),
-        _ => Err(VmPanic::IntegerOverflow {
-            message: format!("{l} {op} {r} overflows int"),
-        }
-        .into()),
-    }
-}
-
 /// Widen a BAML `int` (i63) to `f64` for mixed `int`/`float` arithmetic. Values
 /// past 2^53 lose precision — the same widening the `AddFloat`-family bytecode
 /// applies (`as_int().map(|i| i as f64)`), so operator and method agree.
@@ -113,7 +98,11 @@ fn checked_bigint_mul(a: &BigInt, b: &BigInt) -> Result<Arc<BigInt>, VmRustFnErr
 
 impl BamlClassOpsAdd_int__for_int for PackageBamlImpl {
     fn add(int: i64, rhs: i64) -> Result<i64, VmRustFnError> {
-        checked_int(int.checked_add(rhs), int, '+', rhs)
+        Ok(bex_vm_types::int::add(
+            bex_vm_types::int::check(int)?,
+            bex_vm_types::int::check(rhs)?,
+        )?
+        .get())
     }
 }
 
@@ -161,7 +150,11 @@ impl BamlClassOpsAdd_bigint__for_int for PackageBamlImpl {
 
 impl BamlClassOpsSubtract_int__for_int for PackageBamlImpl {
     fn sub(int: i64, rhs: i64) -> Result<i64, VmRustFnError> {
-        checked_int(int.checked_sub(rhs), int, '-', rhs)
+        Ok(bex_vm_types::int::sub(
+            bex_vm_types::int::check(int)?,
+            bex_vm_types::int::check(rhs)?,
+        )?
+        .get())
     }
 }
 
@@ -209,7 +202,11 @@ impl BamlClassOpsSubtract_bigint__for_int for PackageBamlImpl {
 
 impl BamlClassOpsMultiply_int__for_int for PackageBamlImpl {
     fn mul(int: i64, rhs: i64) -> Result<i64, VmRustFnError> {
-        checked_int(int.checked_mul(rhs), int, '*', rhs)
+        Ok(bex_vm_types::int::mul(
+            bex_vm_types::int::check(int)?,
+            bex_vm_types::int::check(rhs)?,
+        )?
+        .get())
     }
 }
 
@@ -260,12 +257,11 @@ impl BamlClassOpsMultiply_bigint__for_int for PackageBamlImpl {
 
 impl BamlClassOpsDivide_int__for_int for PackageBamlImpl {
     fn div(int: i64, rhs: i64) -> Result<i64, VmRustFnError> {
-        if rhs == 0 {
-            return Err(division_by_zero(Value::int(int), Value::int(rhs)));
-        }
-        // `INT_MIN / -1` = 2^62 fits i64 (INT_MIN is -2^62, not i64::MIN) but
-        // not i63; the range check throws IntegerOverflow like `DivInt`.
-        checked_int(Some(int / rhs), int, '/', rhs)
+        Ok(bex_vm_types::int::div(
+            bex_vm_types::int::check(int)?,
+            bex_vm_types::int::check(rhs)?,
+        )?
+        .get())
     }
 }
 
@@ -334,11 +330,11 @@ impl BamlClassOpsDivide_bigint__for_int for PackageBamlImpl {
 
 impl BamlClassOpsRemainder_int__for_int for PackageBamlImpl {
     fn rem(int: i64, rhs: i64) -> Result<i64, VmRustFnError> {
-        if rhs == 0 {
-            return Err(division_by_zero(Value::int(int), Value::int(rhs)));
-        }
-        // |l % r| < |r| <= 2^62: always within i63 range (mirrors `ModInt`).
-        Ok(int % rhs)
+        Ok(bex_vm_types::int::rem(
+            bex_vm_types::int::check(int)?,
+            bex_vm_types::int::check(rhs)?,
+        )?
+        .get())
     }
 }
 
@@ -402,16 +398,8 @@ impl BamlClassOpsRemainder_bigint__for_int for PackageBamlImpl {
 // ── Negate ──────────────────────────────────────────────────────────────────
 
 impl BamlClassOpsNegate_for_int for PackageBamlImpl {
-    // `-INT_MIN` = 2^62 fits i64 but not i63; throw IntegerOverflow with the
-    // `Neg` opcode's message.
     fn neg(int: i64) -> Result<i64, VmRustFnError> {
-        match Value::try_int(int.wrapping_neg()) {
-            Some(_) => Ok(int.wrapping_neg()),
-            None => Err(VmPanic::IntegerOverflow {
-                message: format!("-({int}) overflows int"),
-            }
-            .into()),
-        }
+        Ok(bex_vm_types::int::neg(bex_vm_types::int::check(int)?)?.get())
     }
 }
 

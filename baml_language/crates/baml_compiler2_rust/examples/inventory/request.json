@@ -1,0 +1,7 @@
+{
+  "batch": {
+    "stock": [10, 2, 0, 7],
+    "changes": [-3, 5, 4, -10],
+    "reorder_below": 5
+  }
+}
