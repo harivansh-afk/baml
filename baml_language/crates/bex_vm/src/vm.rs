@@ -8824,7 +8824,41 @@ impl BexVm {
                     OpCode::Return => {
                         let result = self.stack.get_at(self.stack.ensure_stack_top());
 
-                        self.complete_baml_return(*frame_idx, function, result);
+                        let Frame::Baml(bf) = &mut self.frames[*frame_idx] else {
+                            unreachable!()
+                        };
+                        let locals_offset = bf.locals_offset;
+                        let frame_telemetry = bf.telemetry.take();
+
+                        if let Some(frame_telemetry) = frame_telemetry {
+                            self.complete_bytecode_invocation_with_function(
+                                *frame_idx,
+                                function,
+                                frame_telemetry,
+                                InvocationOutcome::Ok,
+                                Some(result),
+                            );
+                        }
+
+                        // SAFETY: the compiler guarantees a result at or above the
+                        // callee's locals base. That base is therefore an existing
+                        // initialized slot, even for a zero-argument function with
+                        // no locals. Value is Copy, so discarded slots need no drop.
+                        // No allocation or GC point occurs between writing the
+                        // result and shortening the stack to the caller's new top.
+                        let consumed = self.stack.len() - locals_offset.raw();
+                        self.stack.replace_top_n_dynamic(consumed, result);
+                        // SAFETY: this instruction is executing the bytecode frame
+                        // accessed above; stack operations cannot remove that frame.
+                        unsafe { self.frames.no_return_pop() };
+                        // Retain the mixed-backend source-coordinate correction.
+                        if let Some(Frame::Baml(caller)) = self.frames.iter().rev().find(|frame| matches!(frame, Frame::Baml(_))) {
+                            self.cur_pc = caller.faulting_pc;
+                        }
+                        let context = self.current_context().clone();
+                        if let Some(telemetry) = &mut self.telemetry {
+                            telemetry.set_context(context);
+                        }
                         // Select the restored caller. Native continuations and
                         // early yields still hand this frame back to the outer loop.
                         if !self.frames.is_empty() {
