@@ -8284,8 +8284,10 @@ impl BexVm {
     /// Key optimization: `pc` and `code` are kept as local variables in the hot
     /// loop, avoiding frame access on every instruction. They are only saved back
     /// to the frame when control flow changes (calls, returns, exceptions, yields).
-    #[allow(clippy::inline_always)]
-    #[inline(always)]
+    // Keep the mixed-backend driver out of exec's telemetry/error wrapper.
+    // Forced inlining after adding direct calls introduced a VM-pointer reload
+    // per opcode on ARM64. run_compact still inlines into this execution loop.
+    #[inline(never)]
     fn exec_compact(&mut self) -> Result<VmExecState, VmError> {
         if self.frames.is_empty() {
             return Ok(VmExecState::Complete(Value::NULL));
