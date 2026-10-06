@@ -308,6 +308,11 @@ fn candidate<'db>(
     loc: FunctionLoc<'db>,
 ) -> Result<Candidate<'db>, Rejection> {
     let data = function_data(db, loc);
+    if baml_compiler2_hir_ty::infer::trace_hooks::declaration_plan(db, loc).is_some() {
+        return Err(Rejection::unsupported(
+            "declared trace hook: selection prologue remains bytecode",
+        ));
+    }
     if !data.generic_params.is_empty() {
         return Err(Rejection::unsupported("generic function"));
     }

@@ -69,6 +69,12 @@ fn invalid(message: &str) -> VmError {
 // The VM implements these services only while run_compiled holds its permit.
 // Helpers never release the permit or retain borrowed heap storage.
 impl CompiledRuntime for BexVm {
+    fn poll_for_yield(&mut self, poll: &mut bex_vm_types::EarlyYieldCheck) -> bool {
+        self.tlab.flush_alloc_debt();
+        self.tlab.take_budget_crossed();
+        poll.poll()
+    }
+
     fn enter_direct(
         &mut self,
         caller_site: usize,
@@ -245,8 +251,12 @@ impl CompiledHeap for BexVm {
         Ok(value)
     }
 
-    fn alloc_int_array(&mut self, values: Vec<Int63>) -> Value {
-        Value::object(
+    fn alloc_int_array(
+        &mut self,
+        values: Vec<Int63>,
+        poll: &mut bex_vm_types::EarlyYieldCheck,
+    ) -> Value {
+        let value = Value::object(
             self.tlab.alloc_array(
                 RealizedTy::Int,
                 values
@@ -254,7 +264,18 @@ impl CompiledHeap for BexVm {
                     .map(|value| Value::int(value.get()))
                     .collect(),
             ),
-        )
+        );
+        // Match VM allocation settlement, but notify the checker on loan to
+        // generated code, not the temporarily inactive copy in self.
+        if self.tlab.alloc_debt().balance().unsigned_abs()
+            >= bex_heap::SETTLE_QUANTUM.unsigned_abs()
+        {
+            self.tlab.flush_alloc_debt();
+        }
+        if self.tlab.take_budget_crossed() {
+            poll.poll_soon();
+        }
+        value
     }
 
     fn int_array_len(&self, array: Value) -> Result<Int63, VmRustFnError> {
@@ -287,7 +308,7 @@ impl CompiledHeap for BexVm {
         index: Int63,
         value: Int63,
     ) -> Result<(), VmRustFnError> {
-        let mut guard = self.compiled_array(array)?.lock_mut();
+        let mut guard = self.compiled_array(array)?.lock_mut(self.tlab.alloc_debt());
         let index = crate::array_index::resolve_index(index.get(), guard.len()).ok_or(
             VmPanic::IndexOutOfBounds {
                 index: index.get(),
@@ -368,9 +389,11 @@ impl BexVm {
         // Its pressure flags remain shared and its exact counter is restored.
         // The clone costs refcounts once per resume, not a virtual call on every
         // loop edge; keep the generated should_early_yield check inlinable.
+        self.settle();
         let mut poll = self.early_yield.clone();
         let result = active.resume(input, &mut poll, self);
         self.early_yield = poll;
+        self.settle();
         let site = active.site();
         let Frame::Baml(frame) = &mut self.frames[owner] else {
             unreachable!("compiled invocation remains live during its body")
@@ -414,7 +437,7 @@ impl BexVm {
                     return Ok(Some(VmExecState::Complete(self.stack.ensure_pop())));
                 }
                 *frame_idx = self.frames.len() - 1;
-                if self.early_yield.should_early_yield() {
+                if self.should_early_yield() {
                     return Ok(Some(VmExecState::EarlyYield));
                 }
                 Ok(None)

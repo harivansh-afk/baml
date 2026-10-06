@@ -57,7 +57,11 @@ pub enum CompiledAction {
 /// its elements; only `alloc_int_array` creates a new array.
 pub trait CompiledHeap {
     fn check_int_array(&self, value: Value) -> Result<Value, VmInternalError>;
-    fn alloc_int_array(&mut self, values: Vec<baml_type::Int63>) -> Value;
+    fn alloc_int_array(
+        &mut self,
+        values: Vec<baml_type::Int63>,
+        poll: &mut EarlyYieldCheck,
+    ) -> Value;
     fn int_array_len(&self, array: Value) -> Result<baml_type::Int63, VmRustFnError>;
     fn int_array_get(
         &self,
@@ -76,6 +80,10 @@ pub trait CompiledHeap {
 /// Direct calls keep their locals on the Rust stack; these hooks retain only
 /// logical BAML invocation metadata. They never park or run another body.
 pub trait CompiledRuntime: CompiledHeap {
+    /// Cold half of a checkpoint whose inlined `poll.tick()` is due. Settle
+    /// payload debt before testing GC pressure, using the loaned checker.
+    fn poll_for_yield(&mut self, poll: &mut EarlyYieldCheck) -> bool;
+
     fn enter_direct(
         &mut self,
         caller_site: usize,
@@ -242,6 +250,17 @@ pub fn install(
             || function.param_has_default.iter().any(|v| *v)
             || !function.bytecode.exception_table.is_empty()
             || !function.bytecode.shield_table.is_empty()
+            || function.bytecode.instructions.iter().any(|instruction| {
+                matches!(
+                    instruction,
+                    crate::Instruction::BeginTraceHook(_)
+                        | crate::Instruction::EndTraceHook
+                        | crate::Instruction::TraceHookHidden
+                        | crate::Instruction::TraceHookTiming
+                        | crate::Instruction::TraceHookSpan
+                        | crate::Instruction::TraceHookRich
+                )
+            })
         {
             return Err(invalid(
                 "compiled target has an unsupported invocation contract",

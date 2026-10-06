@@ -44,6 +44,27 @@ async fn run(image: &bex_vm_types::Program, compiled: bool) -> Vec<String> {
         .unwrap(),
     );
     let metadata = engine.program_metadata().await;
+    let hook_logger = bex_engine::logger::TraceLogger::bounded(4);
+    let hook_finished = AtomicBool::new(false);
+    let hook_call = async {
+        let result = engine.call_function(
+            "user.selected_caller", vec![External::Int(4)],
+            FunctionCallContextBuilder::new(sys_types::CallId::next())
+                .with_logger(hook_logger.clone()).build(), true,
+        ).await;
+        hook_finished.store(true, Ordering::SeqCst);
+        result
+    };
+    let hook_gc = async {
+        logged(&hook_logger).await;
+        assert!(!hook_finished.load(Ordering::SeqCst));
+        engine.collect_garbage(bex_heap::CollectionLevel::Major).await;
+        assert!(!hook_finished.load(Ordering::SeqCst), "collection must complete while selection is suspended");
+    };
+    let (hook_value, ()) = tokio::join!(hook_call, hook_gc);
+    assert_eq!(hook_value.unwrap(), External::Int(22));
+    assert_eq!(engine.call_function("user.hidden_caller", vec![External::Int(4)], context(), true)
+        .await.unwrap(), External::Int(15));
     assert_eq!(engine.call_function("user.direct_entry", vec![External::Int(4)], context(), true)
         .await.unwrap(), External::Int(14));
     assert_eq!(engine.call_function("user.captured_direct", vec![External::Int(4)], context(), true)
@@ -164,7 +185,7 @@ async fn run(image: &bex_vm_types::Program, compiled: bool) -> Vec<String> {
         .unwrap()
         .files
     {
-        saw_compiled_version |= file.header.as_ref().unwrap().format_minor >= 7;
+        saw_compiled_version |= file.header.as_ref().unwrap().format_minor >= 11;
         if let Some(definitions) = file.definitions {
             for function in definitions.functions {
                 if let Some(proto::function_definition::Resolution::Metadata(metadata)) =
@@ -205,6 +226,8 @@ async fn run(image: &bex_vm_types::Program, compiled: bool) -> Vec<String> {
         let path = &paths[&((completion.node >> 1) as u32)];
         let function = &functions[&path.callee_function_id];
         if function.fqn.starts_with("user.") {
+            assert_ne!(function.fqn, "user.selected", "custom Hidden hook must suppress its target span");
+            assert_ne!(function.fqn, "user.hidden_target", "builtin Hidden mode must suppress its target span");
             let caller = path
                 .visible_caller_function_id
                 .and_then(|id| functions.get(&id))

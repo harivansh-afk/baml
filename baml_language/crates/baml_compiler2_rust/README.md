@@ -26,6 +26,15 @@ There is no separate `bex_native` runtime. The prototype's integer helpers now h
 
 ## Execution contract
 
+The production integration worktree tracks canary `907a6d9c50` (2026-10-06).
+Recording describes logical BAML calls independently of the executor. Declaration
+trace hooks are a separate selection phase: they can execute BAML and suspend
+before the target starts. Functions with any declared hook currently retain
+bytecode, with an explicit admission reason; their callers can remain native.
+Installation also rejects compiled overrides that would skip a hook prologue.
+This preserves built-in Hidden/Timing/Span/Rich modes, custom hooks, suppression,
+and telemetry-off bypass through the current VM rather than duplicating policy.
+
 A generated body owns typed locals and a continuation. `resume` returns `Return`, `Call` or `Yield`, or a runtime error. The VM drives calls and suspension; Rust's call stack never stores a suspended BAML caller. Recursion therefore uses BAML's existing frame limit.
 
 `BamlFrame` owns the common invocation state. Its execution state selects bytecode or a compiled body. Compiled BAML functions retain BAML identity and observation rules; they are distinct from hidden Rust builtins. Both backends share logical completion and exception-unwind rules. Bytecode retains its specialized in-place return housekeeping.
@@ -55,7 +64,14 @@ Arguments remain rooted on the eval stack until a compiled body takes ownership.
 
 Loops cooperate through the existing yield checker. GC waits for permits to be released. Cancellation remains a language checkpoint at sys-op/await boundaries, with shielding inherited through compiled calls from interpreted cleanup. A GC yield does not introduce a new cancellation point.
 
-Source sites are independent of resume block numbers. Both emitters derive diagnostic lines from the same normalized span start, independent of bytecode sequence-point placement. Btel records compiled functions and exact compiled-site coordinates using format minor 7. Entry, call, panic and restored-caller locations stay meaningful across yields and hidden builtin continuations. Calls can be observed or hidden through the existing policies; explicit input/output captures also work across compiled boundaries.
+The inlined checkpoint decrements the loaned checker; only a due checkpoint
+calls the runtime to settle TLAB payload debt before polling pressure. Array
+allocation notifies that same checker when spending crosses the GC budget, and
+array writes use the current allocation-metered guard. Installed compiled
+bindings participate in the heap footprint census. GC root spans measure the
+collection pause, not the mutator's park wait; keep those measurements separate.
+
+Source sites are independent of resume block numbers. Both emitters derive diagnostic lines from the same normalized span start, independent of bytecode sequence-point placement. Btel records compiled functions and exact compiled-site coordinates using format minor 11. Entry, call, panic and restored-caller locations stay meaningful across yields and hidden builtin continuations. Calls can be observed or hidden through the existing policies; explicit input/output captures also work across compiled boundaries.
 
 ## Admission and binding
 
@@ -80,7 +96,7 @@ cargo build --release
 
 The runtime crates are not published, so the source checkout is explicit and must match the compiler revision. The generated project copies the dependency lock and toolchain, configures fat LTO, one codegen unit and optimization level 3, and reuses `baml_pack_host` for arguments, output, exit codes and runtime behavior. Existing bytecode-only `baml pack` output is unchanged. This export produces a Cargo project; it does not claim to have built the executable.
 
-The current host links the full runtime, including runtime compilation. Neither binary shrinking nor a speedup is established by this implementation. The shared VM can compile for Wasm; the packed executable host is native-only.
+Both host paths verify the current artifact telemetry policy before runtime setup, including permitted environment overrides. The current host links the full runtime, including runtime compilation. Neither binary shrinking nor a speedup is established by this implementation. The shared VM can compile for Wasm; the packed executable host is native-only.
 
 ## Validation and remaining work
 

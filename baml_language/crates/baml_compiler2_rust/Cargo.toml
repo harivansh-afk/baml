@@ -27,10 +27,10 @@ bex_vm_types = { workspace = true }
 borsh = { workspace = true }
 baml_compiler_diagnostics = { workspace = true }
 baml_db = { workspace = true }
-baml_tests = { workspace = true }
+baml_test_support = { workspace = true }
 bex_engine = { workspace = true }
 sys_ops = { workspace = true }
-sys_native = { workspace = true }
+sys_native = { workspace = true, features = [ "bundle-http", "ring-crypto" ] }
 sys_types = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = [ "macros", "rt-multi-thread" ] }

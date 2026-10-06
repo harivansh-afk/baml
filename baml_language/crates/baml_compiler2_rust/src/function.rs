@@ -109,7 +109,7 @@ pub(crate) fn emit<'db>(
             );
         }
     }
-    out.push_str("                _ => return Err(VmInternalError::InvalidCompiledCode { message: \"unknown compiled continuation\".into() }.into()),\n            },\n            _ => return Err(VmInternalError::InvalidCompiledCode { message: \"unexpected compiled resume input\".into() }.into()),\n        }\n        loop {\n            if poll.should_early_yield() { return Ok(CompiledAction::Yield); }\n            match self.block {\n");
+    out.push_str("                _ => return Err(VmInternalError::InvalidCompiledCode { message: \"unknown compiled continuation\".into() }.into()),\n            },\n            _ => return Err(VmInternalError::InvalidCompiledCode { message: \"unexpected compiled resume input\".into() }.into()),\n        }\n        loop {\n            if poll.tick() && runtime.poll_for_yield(poll) { return Ok(CompiledAction::Yield); }\n            match self.block {\n");
     let line_starts: Vec<u32> = std::iter::once(0)
         .chain(
             source
@@ -507,7 +507,10 @@ impl<'db> Emitter<'_, 'db> {
                     .map(|value| self.operand_of(value, Int))
                     .collect::<Result<Vec<_>>>()?
                     .join(", ");
-                Ok((format!("runtime.alloc_int_array(vec![{values}])"), IntArray))
+                Ok((
+                    format!("runtime.alloc_int_array(vec![{values}], poll)"),
+                    IntArray,
+                ))
             }
             Rvalue::Len(place) => {
                 let array = self.place_of(place, IntArray)?;

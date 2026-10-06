@@ -25,11 +25,13 @@
 use std::{collections::HashMap, process::ExitCode, sync::Arc};
 
 use baml_exec::{
-    DispatchResult, PackEnvelope, PackMode, clamp_exit_code, dispatch_target,
-    load_json_source, parse_multi_target_argv, parse_target_argv, print_error,
+    DispatchResult, PackMode, clamp_exit_code, dispatch_target, load_json_source,
+    parse_multi_target_argv, parse_target_argv, print_error,
 };
 use bex_engine::{BexEngine, UserFunctionInfo};
 use sys_native::SysOpsExt;
+
+pub use baml_exec::PackEnvelope;
 
 /// Build `baml.argv` per BEP-027 §"baml.argv in packaged binaries".
 ///

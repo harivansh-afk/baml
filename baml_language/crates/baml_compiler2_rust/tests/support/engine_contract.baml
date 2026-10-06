@@ -38,3 +38,20 @@ function spawned(x: int) -> int {
 function captured(x: int) -> int {
     compiled_entry(x, $trace = trace.span(inputs = true, output = true, error = true))
 }
+
+function select_trace(values: int[], settings: trace.Settings) -> trace.Options throws never {
+    log.info("hook-parked");
+    baml.sys.sleep(baml.time.Duration.from_milliseconds(500n)) catch (error) { baml.errors.Io => {} };
+    values[0] += 1;
+    trace.hidden()
+}
+/// baml:$trace=select_trace
+function selected(values: int[]) -> int { direct_entry(values[0]) }
+function selected_caller(n: int) -> int {
+    let values = [n];
+    selected(values) + values[0]
+}
+
+/// baml:$trace=trace.hidden
+function hidden_target(n: int) -> int { direct_entry(n) }
+function hidden_caller(n: int) -> int { hidden_target(n) + 1 }

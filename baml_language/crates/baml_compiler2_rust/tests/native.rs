@@ -9,7 +9,7 @@ use baml_compiler2_hir::{item_data::file_functions, loc::FunctionLoc};
 use baml_compiler2_mir::OptLevel;
 use baml_compiler2_rust::emit_module;
 use baml_db::ProjectDatabase;
-use baml_tests::stdlib_prefix;
+use baml_test_support as stdlib_prefix;
 use bex_engine::{BexCallArg, BexEngine, BexExternalValue, FunctionCallContextBuilder};
 use sys_native::SysOpsExt;
 
@@ -734,6 +734,24 @@ fn generated_code_preserves_engine_contract() {
     let db = checked_db(source);
     let image = linked(&db);
     let module = emit_module(&db, &image.program, &image.package_roots, &candidates(&db)).unwrap();
+    for name in ["selected", "hidden_target"] {
+        assert!(
+            module
+                .fallback
+                .iter()
+                .any(|f| f.function == name && f.reason.contains("declared trace hook")),
+            "a native body must not bypass {name}'s trace selection"
+        );
+    }
+    for name in ["selected_caller", "hidden_caller"] {
+        let id = image.program.rendered_callables()[&format!("user.{name}")]
+            .object
+            .raw();
+        assert!(
+            module.compiled.contains(&id),
+            "{name} should use native-to-bytecode interop"
+        );
+    }
     assert!(
         module.compiled.len() >= 7,
         "expected scalar callers/callees, got {:?}",
@@ -769,6 +787,46 @@ fn generated_code_preserves_engine_contract() {
             &borsh::to_vec(&image.program).unwrap()
         ),
         "engine contract ok\n"
+    );
+}
+
+// The property under test is native admission/dispatch, which BAML itself
+// cannot select or inspect. Both backends run in the same telemetry-off child.
+#[test]
+fn declared_trace_hooks_are_skipped_with_telemetry_off() {
+    let db = checked_db(include_str!("support/engine_contract.baml"));
+    let image = linked(&db);
+    let module = emit_module(&db, &image.program, &image.package_roots, &candidates(&db)).unwrap();
+    let native = format!(
+        "mod generated {{ {} }}\n{}",
+        module.source,
+        r#"
+use std::sync::Arc;
+use bex_engine::{BexEngine, BexExternalValue as V, FunctionCallContextBuilder};
+use sys_native::SysOpsExt;
+#[tokio::main]
+async fn main() {
+    for native in [false, true] {
+        let mut program = borsh::from_slice(include_bytes!("../program.bin")).unwrap();
+        if native { generated::install(&mut program).unwrap(); }
+        let engine = Arc::new(BexEngine::new(program, Arc::new(sys_native::SysOps::native()), vec![]).unwrap());
+        let context = FunctionCallContextBuilder::new(sys_types::CallId::next()).build();
+        let result = engine.call_function("user.selected_caller", vec![V::Int(4)], context, true).await.unwrap();
+        assert_eq!(result, V::Int(18), "the hook must not mutate its argument with telemetry off");
+        engine.shutdown().await;
+        assert!(engine.telemetry_result().is_none());
+    }
+    println!("trace off ok");
+}
+"#
+    );
+    assert_eq!(
+        build_and_run(
+            "trace_off",
+            &native,
+            &borsh::to_vec(&image.program).unwrap()
+        ),
+        "trace off ok\n"
     );
 }
 

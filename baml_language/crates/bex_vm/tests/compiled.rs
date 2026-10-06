@@ -2,7 +2,7 @@
 //! compiled bodies exercise transitions and GC with deliberately distinct PCs.
 #![cfg(not(target_arch = "wasm32"))]
 
-use baml_db::testing::compile_source;
+use baml_test_support::compile_source;
 use bex_vm::package_baml::{Continuation, NativeCallResult};
 use bex_vm::{BexVm, NativeFunction, VmExecState};
 use bex_vm_types::{
@@ -83,6 +83,65 @@ fn sum(args: &[Value], _: &dyn CompiledHeap) -> Result<Box<dyn CompiledFrame>, V
         remaining: read_int(args[0])?.get(),
         total: 0,
     }))
+}
+
+#[test]
+fn compiled_bindings_cannot_skip_declared_trace_selection() {
+    let mut program = compile_source(
+        r#"
+        function plain(n: int) -> int { n }
+        /// baml:$trace=trace.hidden
+        function hooked(n: int) -> int { n }
+    "#,
+    );
+    let plain = attach(&mut program, "user.plain", sum, 1);
+    let Object::Function(function) = &program.objects[ObjectIndex::from_raw(plain)] else {
+        unreachable!()
+    };
+    let installed = function.compiled.as_ref().unwrap();
+    let code = Box::leak(Box::new(CompiledCode {
+        create: installed.create,
+        sites: installed.sites,
+        calls: installed.calls,
+    }));
+    let object = program.rendered_callables()["user.hooked"].object.raw();
+    let fingerprint = program_fingerprint(&program).unwrap();
+    assert!(
+        install(
+            &mut program,
+            fingerprint,
+            &[CompiledBinding { object, code }]
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn compiled_binding_memory_is_counted_by_the_heap_meter() {
+    let mut program = compile_source("function Sum(n: int) -> int { n }");
+    let object = program.rendered_callables()["user.Sum"].object;
+    let mut before = bex_vm_types::Meter::charge();
+    program.objects[object].measure(&mut before);
+    attach(&mut program, "user.Sum", sum, 1);
+    let mut after = bex_vm_types::Meter::charge();
+    program.objects[object].measure(&mut after);
+    assert_eq!(
+        after.total() - before.total(),
+        size_of::<InstalledCode>() + 2 * size_of::<usize>()
+    );
+}
+
+#[test]
+fn compiled_checkpoint_settles_payload_debt_before_polling() {
+    let program = compile_source("function entry() -> int { 1 }");
+    let flag = Arc::new(AtomicBool::new(false));
+    let mut vm = BexVm::from_program(program, flag.clone()).unwrap();
+    let mut poll = EarlyYieldCheck::with_interval(flag, 1);
+    vm.tlab.alloc_debt().grow(1024);
+    assert!(vm.tlab.alloc_debt().balance() > 0);
+    assert!(poll.tick());
+    assert!(!CompiledRuntime::poll_for_yield(&mut vm, &mut poll));
+    assert_eq!(vm.tlab.alloc_debt().balance(), 0);
 }
 
 #[test]

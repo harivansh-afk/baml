@@ -125,7 +125,8 @@ pub(crate) fn write(
     Ok(())
 }
 
-const MAIN: &str = r#"mod generated;
+const MAIN: &str = r#"#[allow(dead_code, unused_variables, unused_mut, unused_assignments)]
+mod generated;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
@@ -158,6 +159,7 @@ mod tests {
             source: String::new(),
             compiled: vec![],
             fallback: vec![],
+            direct_calls: vec![],
         };
         assert!(write(&directory, &runtime, &[], &module).is_err());
         assert_eq!(

@@ -2511,7 +2511,9 @@ impl BexVm {
         let caller = pending
             .caller
             .and_then(|index| self.frame_function_identity(index));
-        let observed = pending.caller.is_some_and(|index| matches!(&self.frames[index], Frame::Baml(frame) if frame.telemetry.is_some()));
+        let observed = pending.caller.is_some_and(
+            |index| matches!(&self.frames[index], Frame::Baml(frame) if frame.telemetry.is_some()),
+        );
         // Resolve captured parameter cells without allocating for ordinary arities.
         let args: SmallVec<[Value; 8]> = self.stack.0
             [locals_offset.raw()..locals_offset.raw() + function.arity]

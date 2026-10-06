@@ -187,6 +187,11 @@ impl Object {
             Object::RustData(data) => meter.shared(data, |meter| data.measure(meter)),
             Object::Type(_) => meter.bytes(size_of::<TypeValue>()),
             Object::Function(function) => {
+                if let Some(compiled) = &function.compiled {
+                    // The descriptor's code/sites are static; the installed
+                    // image binding itself is shared heap-owned metadata.
+                    meter.shared(compiled, |_| {});
+                }
                 let bytecode = &function.bytecode;
                 meter.bytes(size_of::<Function>());
                 meter.bytes(bytecode.instructions.footprint());
