@@ -228,6 +228,18 @@ impl EarlyYieldCheck {
             park_requested,
         }
     }
+
+    /// Charge bounded work that ran without visiting cooperative checkpoints.
+    ///
+    /// This never yields: a direct Rust call chain must finish before its owner
+    /// can park. Saturate at one so the next existing checkpoint polls the flags,
+    /// without underflow or losing an already-due poll. Callers charge a complete
+    /// transitive region once, rather than charging its nested calls again.
+    #[inline]
+    pub fn account_work(&mut self, work: u64) {
+        self.counter = self.counter.saturating_sub(work).max(1);
+    }
+
     /// Decrement and return true if we should yield.
     ///
     /// Checks every ~32M calls (~1.5s at typical IPC). GC parks at async
@@ -361,5 +373,41 @@ mod tests {
     #[test]
     fn reset_is_public() {
         let _: fn(&mut EarlyYieldCheck) = EarlyYieldCheck::reset;
+    }
+
+    #[test]
+    fn bounded_work_advances_the_next_existing_checkpoint() {
+        let flag = Arc::new(AtomicBool::new(true));
+        let mut check = EarlyYieldCheck::with_interval(flag, 8);
+        check.account_work(6);
+        assert!(!check.should_early_yield());
+        assert!(check.should_early_yield());
+    }
+
+    #[test]
+    fn oversized_or_repeated_charges_cannot_wrap_or_postpone_a_poll() {
+        let flag = Arc::new(AtomicBool::new(true));
+        let mut check = EarlyYieldCheck::with_interval(flag, 8);
+        check.account_work(u64::MAX);
+        check.account_work(0);
+        check.account_work(u64::MAX);
+        assert!(check.should_early_yield());
+        for _ in 0..7 {
+            assert!(!check.should_early_yield());
+        }
+        assert!(check.should_early_yield());
+    }
+
+    #[test]
+    fn charged_checker_keeps_flags_and_accounting_across_a_loan() {
+        let flag = Arc::new(AtomicBool::new(false));
+        let mut check = EarlyYieldCheck::with_interval(flag.clone(), 8);
+        let mut loan = check.clone();
+        loan.account_work(100);
+        check = loan;
+        assert!(!check.should_early_yield(), "charging is not cancellation");
+        check.account_work(100);
+        flag.store(true, Ordering::Relaxed);
+        assert!(check.should_early_yield());
     }
 }
