@@ -19,7 +19,7 @@ pub(crate) struct Target {
     pub global: usize,
     pub parameters: Vec<NativeType>,
     pub result: NativeType,
-    work: usize,
+    pub(crate) work: usize,
     depth: usize,
 }
 

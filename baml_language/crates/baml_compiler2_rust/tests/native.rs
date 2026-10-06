@@ -809,3 +809,35 @@ fn generated_arrays_survive_gc_and_mixed_suspension() {
         "array contract ok\n"
     );
 }
+
+#[test]
+fn direct_regions_charge_polling_without_suspending_direct_frames() {
+    let db = checked_db(include_str!("support/poll_contract.baml"));
+    let image = linked(&db);
+    let module = emit_module(&db, &image.program, &image.package_roots, &candidates(&db)).unwrap();
+    assert!(module.fallback.is_empty(), "{:?}", module.fallback);
+    for name in ["leaf", "middle", "outer", "failing"] {
+        assert!(
+            module
+                .direct_calls
+                .iter()
+                .any(|f| f.function == name && f.eligible)
+        );
+    }
+    let instrumented = module.source.replace(
+        "runtime.enter_direct(",
+        "DIRECT_ENTRIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed); runtime.enter_direct(",
+    );
+    let main = format!(
+        "mod generated {{\npub static DIRECT_ENTRIES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);\n{instrumented}\n}}\n{}",
+        include_str!("support/poll_contract.rs"),
+    );
+    assert_eq!(
+        build_and_run(
+            "poll_contract",
+            &main,
+            &borsh::to_vec(&image.program).unwrap()
+        ),
+        "poll contract ok\n"
+    );
+}

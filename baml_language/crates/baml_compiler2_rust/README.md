@@ -34,6 +34,13 @@ A generated body owns typed locals and a continuation. `resume` returns `Return`
 
 `direct.rs` conservatively selects scalar functions with acyclic control flow and an acyclic eligible call graph. A region is limited to 256 work units (local slots plus MIR statements/terminators, including all transitive calls), 16 calls deep and 128 locals per function. Branches are summed rather than choosing a path. These limits bound generated work between the existing cooperative checks; they are not a wall-clock latency guarantee. Heap-valued functions, loops, recursion and calls to unsupported functions remain resumable. A looping or array-using caller can still call an eligible scalar callee directly.
 
+Each resumable-to-direct call charges that complete transitive work bound to the
+existing yield checker before entering the region, including calls that fail.
+Nested direct callees are not charged again. Exhaustion makes the next existing
+resumable block checkpoint poll; it never parks inside a direct Rust chain or
+adds a cancellation point. The counter saturates at a pending poll, so a region
+cannot wrap the counter or postpone an already-due check.
+
 Generated `direct_*` functions use typed Rust parameters, locals and results. They have no boxed continuation or heap argument vector. They still use `CompiledRuntime` entry/exit hooks to retain a logical BAML frame, check the existing stack limit and record telemetry. Hooks do not dispatch a body, park or yield. This path is active with telemetry enabled; it does not hide calls or disable captures. `native-support.txt` includes the per-function eligibility and exclusion reason.
 
 On error, direct activations leave their logical frames and deepest source site for the existing unwinder. On success, their result stays in Rust storage and their metadata is popped without touching the evaluation stack. Bindings are checked against the installed descriptor before entering a direct body.

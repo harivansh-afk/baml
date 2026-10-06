@@ -430,8 +430,17 @@ impl<'db> Emitter<'_, 'db> {
                         .join(", ");
                     let destination = local_place(destination)?;
                     self.expect(destination, target.result)?;
+                    // Direct chains have no internal safepoints. Charge their
+                    // full bounded work once at the resumable boundary, before
+                    // entering so errors also retain the charge. The next block
+                    // performs the existing poll after all direct frames unwind.
+                    let charge = if self.resumable {
+                        format!("poll.account_work({}); ", target.work)
+                    } else {
+                        String::new()
+                    };
                     format!(
-                        "{} = direct_{}(runtime, {}, {args})?; {block_name} = {};",
+                        "{charge}{} = direct_{}(runtime, {}, {args})?; {block_name} = {};",
                         self.local_name(destination),
                         target.object,
                         self.site_name(),
