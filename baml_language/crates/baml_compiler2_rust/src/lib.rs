@@ -292,6 +292,7 @@ pub fn emit_module<'db>(
     source.push_str("\npub fn install(program: &mut bex_vm_types::Program) -> Result<(), VmInternalError> {\n    compiled::install(program, ");
     let _ = writeln!(source, "{fingerprint:?}, &[");
     for object in &compiled {
+        let object = object.raw();
         let _ = writeln!(
             source,
             "        compiled::CompiledBinding {{ object: ObjectIndex::from_raw({object}), code: &CODE_{object} }},"

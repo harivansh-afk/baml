@@ -214,6 +214,7 @@ pub(crate) fn emit<'db>(
         emitter.initialized.clone_from(&plan.initialized);
         let _ = writeln!(out, "                {} => {{", block.id.0);
         for (statement, site) in block.statements.iter().zip(&plan.statements) {
+            let site = site.raw();
             let _ = writeln!(
                 out,
                 "                    self.site = SiteId::from_raw({site});"
@@ -226,7 +227,7 @@ pub(crate) fn emit<'db>(
             .terminator
             .as_ref()
             .expect("analysis verified terminators");
-        let site = plan.terminator;
+        let site = plan.terminator.raw();
         let _ = writeln!(
             out,
             "                    self.site = SiteId::from_raw({site});"
@@ -263,9 +264,13 @@ pub(crate) fn emit<'db>(
             line,
             kind,
         } = entry;
+        let kind = match kind {
+            SiteKind::Operation => "Operation",
+            SiteKind::Call => "Call",
+        };
         let _ = writeln!(
             out,
-            "    CompiledSite {{ file_id: {file_id}, start: {start}, end: {end}, line: {line}, kind: SiteKind::{kind:?} }},"
+            "    CompiledSite {{ file_id: {file_id}, start: {start}, end: {end}, line: {line}, kind: SiteKind::{kind} }},"
         );
     }
     out.push_str("] };\n");
@@ -308,7 +313,7 @@ pub(crate) fn emit_direct<'db>(
     let mut out = format!(
         "\n#[allow(unused_mut, unused_variables, unused_assignments)]\nfn direct_{id}(runtime: &mut dyn CompiledRuntime, caller_site: SiteId, {parameters}) -> Result<{}, VmRustFnError> {{\n    runtime.enter_direct(caller_site, GlobalIndex::from_raw({}), &CODE_{id}, &[{arguments}])?;\n",
         result_ty.rust(),
-        target.global,
+        target.global.raw(),
     );
     for (i, ty) in types.iter().enumerate() {
         if !(1..=candidate.arity).contains(&i) {
@@ -328,6 +333,7 @@ pub(crate) fn emit_direct<'db>(
         emitter.initialized.clone_from(&plan.initialized);
         let _ = writeln!(out, "            {} => {{", block.id.0);
         for (statement, site) in block.statements.iter().zip(&plan.statements) {
+            let site = site.raw();
             let _ = writeln!(out, "                site = SiteId::from_raw({site});");
             if let Some(line) = emitter.statement(&statement.kind)? {
                 let _ = writeln!(out, "                {line}");
@@ -336,7 +342,7 @@ pub(crate) fn emit_direct<'db>(
         let _ = writeln!(
             out,
             "                site = SiteId::from_raw({});",
-            plan.terminator
+            plan.terminator.raw()
         );
         for line in emitter.terminator(
             block.terminator.as_ref().expect("admitted terminator"),
@@ -537,7 +543,7 @@ impl<'db> Emitter<'_, 'db> {
                     format!(
                         "{charge}{} = direct_{}(runtime, {}, {args})?; {block_name} = {};",
                         self.local_name(destination),
-                        target.object,
+                        target.object.raw(),
                         self.site_name(),
                         continuation.0
                     )
@@ -550,7 +556,8 @@ impl<'db> Emitter<'_, 'db> {
                     let target = self
                         .callees
                         .get(&callee)
-                        .ok_or_else(|| Rejection::invalid("unbound direct call"))?;
+                        .ok_or_else(|| Rejection::invalid("unbound direct call"))?
+                        .raw();
                     let args = args
                         .iter()
                         .map(|arg| {

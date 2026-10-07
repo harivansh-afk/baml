@@ -14,6 +14,9 @@ doctest = false
 [lints]
 workspace = true
 
+[features]
+heap_debug = [ "bex_vm_types/heap_debug", "bex_engine/heap_debug" ]
+
 [dependencies]
 baml_base = { workspace = true }
 baml_compiler2_hir = { workspace = true }

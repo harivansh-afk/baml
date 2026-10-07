@@ -708,9 +708,14 @@ fn build_and_run(test: &str, main: &str, program: &[u8]) -> String {
         "btel_recorder",
         "btel_reader",
     ] {
+        let features = if cfg!(feature = "heap_debug") && name == "bex_engine" {
+            ", features = [\"heap_debug\"]"
+        } else {
+            ""
+        };
         let _ = writeln!(
             manifest,
-            "{name} = {{ path = {:?} }}",
+            "{name} = {{ path = {:?}{features} }}",
             workspace.join("crates").join(name)
         );
     }
