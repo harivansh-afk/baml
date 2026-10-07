@@ -85,6 +85,89 @@ fn pack_project(
 // Tests
 // ============================================================================
 
+// Rust can observe the exported Cargo project and the resulting executable;
+// a BAML corpus test cannot exercise this compiler/host integration boundary.
+#[test]
+fn rust_project_builds_runs_and_preserves_artifact_policy() {
+    let temp = tempfile::tempdir().unwrap();
+    common::write_project(
+        temp.path(),
+        "function step(n: int) -> int { n + 1 }\nfunction main(n: int) -> int { step(n) * 2 }\n",
+    );
+    std::fs::write(
+        temp.path().join("baml.toml"),
+        r#"[package]
+name = "test"
+[pack.env_var_names]
+BAML_TELEMETRY = "NATIVE_TEST_TELEMETRY"
+"#,
+    )
+    .unwrap();
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .unwrap();
+    let project = temp.path().join("native");
+    let export = Command::new(common::baml_cli())
+        .args(["pack", "main", "--from"])
+        .arg(temp.path())
+        .arg("--emit-rust-project")
+        .arg(&project)
+        .arg("--runtime-source")
+        .arg(&workspace)
+        .env("BAML_HOME", common::shared_baml_home())
+        .env("DEV_BAML_CLI_DISABLE_AGENT_DETECTION", "1")
+        .output()
+        .unwrap();
+    assert!(
+        export.status.success(),
+        "{}",
+        String::from_utf8_lossy(&export.stderr)
+    );
+    assert!(
+        std::fs::read_to_string(project.join("native-support.txt"))
+            .unwrap()
+            .contains("step: direct")
+    );
+    let target = workspace.join("target");
+    let build = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
+        .args(["build", "--offline", "--quiet", "--manifest-path"])
+        .arg(project.join("Cargo.toml"))
+        .arg("--target-dir")
+        .arg(&target)
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let binary = target
+        .join("debug")
+        .join(format!("baml-app{}", std::env::consts::EXE_SUFFIX));
+    let run = |mode: &str| {
+        Command::new(&binary)
+            .args(["--n", "5"])
+            .env("BAML_HOME", temp.path().join("home"))
+            .env("BAML_TELEMETRY", "invalid-ambient-value")
+            .env("NATIVE_TEST_TELEMETRY", mode)
+            .env_remove("BOUNDARY_PROJECT")
+            .env_remove("BOUNDARY_API_KEY")
+            .output()
+            .unwrap()
+    };
+    let result = run("off");
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "12\n");
+    let rejected = run("invalid");
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("NATIVE_TEST_TELEMETRY"));
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn artifact_recording_level_requires_explicit_permission_and_off_skips_auth() {
     use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};

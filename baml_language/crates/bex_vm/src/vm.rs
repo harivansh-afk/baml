@@ -234,13 +234,12 @@ struct StaticVirtualCallTarget {
     frame_type_args: Vec<bex_vm_types::RealizedTy>,
 }
 
-/// Bytecode call frame — pushed when entering a bytecode function.
-#[derive(Clone, Debug)]
-pub struct BytecodeFrame {
+/// One logical BAML invocation, independent of the body's execution backend.
+#[derive(Debug)]
+pub struct BamlFrame {
     /// Pointer to the running function (or closure) object.
     pub function: HeapPtr,
-    /// Instruction pointer (IP). Points to the next instruction.
-    pub instruction_ptr: usize,
+    execution: compiled::FrameExecution,
     /// Local variables offset in the eval stack.
     pub(crate) locals_offset: StackIndex,
     /// Resolved type arguments for this call frame.
@@ -313,9 +312,12 @@ impl FrameTypeMetadata {
     }
 }
 
-impl RootHaver for BytecodeFrame {
+impl RootHaver for BamlFrame {
     fn collect_roots(&self, roots: &mut Vec<HeapPtr>) {
         roots.push(self.function);
+        if let compiled::FrameExecution::Compiled(active) = &self.execution {
+            active.collect_roots(roots);
+        }
         // A generic slot may acquire a runtime declaration directly from a
         // trusted receiver (FunctionSpec/Stream) without a parallel reflected
         // TypeValue. The realized argument is the semantic type used by
@@ -341,6 +343,9 @@ impl RootHaver for BytecodeFrame {
     }
     fn forward_roots(&mut self, roots: &HashMap<HeapPtr, HeapPtr>) {
         self.function = roots.get(&self.function).copied().unwrap_or(self.function);
+        if let compiled::FrameExecution::Compiled(active) = &mut self.execution {
+            active.forward_roots(roots);
+        }
         for ty in &mut self.type_args {
             ty.visit_heads_mut(&mut |head| {
                 if head.is_resolved()
@@ -395,7 +400,7 @@ impl RootHaver for NativeFrame {
     reason = "bytecode frames are the hot path and remain inline; native continuations are rare"
 )]
 pub enum Frame {
-    Bytecode(BytecodeFrame),
+    Baml(BamlFrame),
     Native(NativeFrame),
 }
 
@@ -403,7 +408,7 @@ impl Frame {
     /// Get the function pointer (valid for both variants).
     pub(crate) fn function(&self) -> HeapPtr {
         match self {
-            Frame::Bytecode(f) => f.function,
+            Frame::Baml(f) => f.function,
             Frame::Native(f) => f.function,
         }
     }
@@ -505,6 +510,7 @@ pub(crate) mod tests {
             kind: FunctionKind::Native(native as *const ()),
             telemetry_function_id: None,
             telemetry_registration: bex_vm_types::FunctionRegistration::default(),
+            compiled: None,
             telemetry_policy_id: btel_types::TelemetryPolicyId::none(),
             local_names: Vec::new(),
             debug_locals: Vec::new(),
@@ -652,7 +658,7 @@ pub(crate) mod tests {
         let (mut vm, native_ptr) = vm_with_native_entry();
         vm.set_entry_point(native_ptr, &[]);
         assert!(vm.frames.iter().all(|frame| match frame {
-            Frame::Bytecode(frame) => frame.telemetry.is_none(),
+            Frame::Baml(frame) => frame.telemetry.is_none(),
             Frame::Native(_) => true,
         }));
         assert!(
@@ -1002,7 +1008,7 @@ pub(crate) mod tests {
     }
 
     fn trampoline_ptr(vm: &BexVm) -> HeapPtr {
-        let Some(Frame::Bytecode(frame)) = vm.frames.last() else {
+        let Some(Frame::Baml(frame)) = vm.frames.last() else {
             panic!("expected trampoline bytecode frame");
         };
         frame.function
@@ -1179,7 +1185,7 @@ pub(crate) mod tests {
             bex_vm_types::TypeHead::new(class_ptr, tag),
             Box::new([]),
         ));
-        let Some(Frame::Bytecode(frame)) = vm.frames.last_mut() else {
+        let Some(Frame::Baml(frame)) = vm.frames.last_mut() else {
             panic!("expected trampoline bytecode frame");
         };
         frame.type_metadata = Some(Box::new(FrameTypeMetadata {
@@ -1203,7 +1209,7 @@ pub(crate) mod tests {
             .expect("frame metadata definition must survive collection");
         vm.forward_roots(&forwarding);
 
-        let Some(Frame::Bytecode(frame)) = vm.frames.last() else {
+        let Some(Frame::Baml(frame)) = vm.frames.last() else {
             panic!("expected trampoline bytecode frame");
         };
         let mut repointed = Vec::new();
@@ -1240,7 +1246,7 @@ pub(crate) mod tests {
             generic_param_count: 0,
             owner: bex_vm_types::types::Owner::anonymous(),
         })));
-        let Some(Frame::Bytecode(frame)) = vm.frames.last_mut() else {
+        let Some(Frame::Baml(frame)) = vm.frames.last_mut() else {
             panic!("expected trampoline bytecode frame");
         };
         frame.type_args = vec![bex_vm_types::RealizedTy::Class(
@@ -1266,7 +1272,7 @@ pub(crate) mod tests {
             .expect("the frame type argument's declaration must survive collection");
         vm.forward_roots(&forwarding);
 
-        let Some(Frame::Bytecode(frame)) = vm.frames.last() else {
+        let Some(Frame::Baml(frame)) = vm.frames.last() else {
             panic!("expected trampoline bytecode frame");
         };
         let bex_vm_types::RealizedTy::Class(head, ..) = &frame.type_args[0] else {
@@ -1342,7 +1348,7 @@ pub(crate) mod tests {
         );
         let exact = TypeValue::new(bex_vm_types::RealizedTy::Class(head, Box::new([])));
 
-        let Some(Frame::Bytecode(frame)) = vm.frames.last_mut() else {
+        let Some(Frame::Baml(frame)) = vm.frames.last_mut() else {
             panic!("expected trampoline bytecode frame");
         };
         frame.type_metadata = Some(Box::new(FrameTypeMetadata {
@@ -1366,7 +1372,7 @@ pub(crate) mod tests {
             .expect("definition must survive collection");
         vm.forward_roots(&forwarding);
 
-        let Some(Frame::Bytecode(frame)) = vm.frames.last() else {
+        let Some(Frame::Baml(frame)) = vm.frames.last() else {
             panic!("expected trampoline bytecode frame");
         };
         let value = frame
@@ -1415,13 +1421,13 @@ pub(crate) mod tests {
 impl RootHaver for Frame {
     fn collect_roots(&self, roots: &mut Vec<HeapPtr>) {
         match self {
-            Frame::Bytecode(f) => f.collect_roots(roots),
+            Frame::Baml(f) => f.collect_roots(roots),
             Frame::Native(f) => f.collect_roots(roots),
         }
     }
     fn forward_roots(&mut self, roots: &HashMap<HeapPtr, HeapPtr>) {
         match self {
-            Frame::Bytecode(f) => f.forward_roots(roots),
+            Frame::Baml(f) => f.forward_roots(roots),
             Frame::Native(f) => f.forward_roots(roots),
         }
     }
@@ -1452,6 +1458,7 @@ struct ContextTransfer {
     target: Value,
 }
 
+mod compiled;
 mod error_evidence;
 use error_evidence::RaiseEntry;
 
@@ -1884,6 +1891,7 @@ pub fn convert_program_with_trace_hooks(
     program: bex_vm_types::Program,
     enabled: bool,
 ) -> Result<BytecodeProgram, VmInternalError> {
+    bex_vm_types::compiled::validate_bindings(&program)?;
     // The one road from an executable into a VM: a decoded program is
     // checked against the format's laws here, and everything after — the
     // rendered views, the loader — indexes into a program that keeps them.
@@ -2354,7 +2362,7 @@ impl BexVm {
 
     pub(crate) fn current_span_id(&self) -> Option<bex_vm_types::trace::SpanId> {
         self.telemetry.as_ref()?;
-        let Frame::Bytecode(frame) = self.frames.last()? else {
+        let Frame::Baml(frame) = self.frames.last()? else {
             return None;
         };
         frame
@@ -2374,7 +2382,7 @@ impl BexVm {
             .iter()
             .rev()
             .find_map(|frame| match frame {
-                Frame::Bytecode(frame) => Some(&frame.context),
+                Frame::Baml(frame) => Some(&frame.context),
                 Frame::Native(_) => None,
             })
             .unwrap_or(&self.root_context)
@@ -2479,7 +2487,7 @@ impl BexVm {
         }
         // The pending frame inherited the caller's context; hook mutations
         // belonged to its own frame. Apply only the returned options here.
-        let Frame::Bytecode(frame) = &mut self.frames[frame_idx] else {
+        let Frame::Baml(frame) = &mut self.frames[frame_idx] else {
             unreachable!()
         };
         if let Some(patch) = pending
@@ -2503,7 +2511,9 @@ impl BexVm {
         let caller = pending
             .caller
             .and_then(|index| self.frame_function_identity(index));
-        let observed = pending.caller.is_some_and(|index| matches!(&self.frames[index], Frame::Bytecode(frame) if frame.telemetry.is_some()));
+        let observed = pending.caller.is_some_and(
+            |index| matches!(&self.frames[index], Frame::Baml(frame) if frame.telemetry.is_some()),
+        );
         // Resolve captured parameter cells without allocating for ordinary arities.
         let args: SmallVec<[Value; 8]> = self.stack.0
             [locals_offset.raw()..locals_offset.raw() + function.arity]
@@ -2536,7 +2546,7 @@ impl BexVm {
                     |caller, callee| Self::register_call_path_functions(&self.heap, caller, callee),
                 )
             };
-            let Frame::Bytecode(frame) = &mut self.frames[frame_idx] else {
+            let Frame::Baml(frame) = &mut self.frames[frame_idx] else {
                 unreachable!()
             };
             frame.telemetry = telemetry;
@@ -2648,7 +2658,7 @@ impl BexVm {
             .iter()
             .rev()
             .find_map(|frame| match frame {
-                Frame::Bytecode(frame) => Some(frame.context.clone()),
+                Frame::Baml(frame) => Some(frame.context.clone()),
                 Frame::Native(_) => None,
             })
             .unwrap_or_else(|| self.root_context.clone());
@@ -2910,7 +2920,7 @@ impl BexVm {
         let mut contexts = Vec::new();
         let mut innermost_bc = true;
         for depth in (0..self.frames.len()).rev() {
-            let Frame::Bytecode(bf) = &self.frames[depth] else {
+            let Frame::Baml(bf) = &self.frames[depth] else {
                 continue;
             };
             let pc = if innermost_bc {
@@ -2923,6 +2933,9 @@ impl BexVm {
             let Ok(func) = (unsafe { self.load_function(depth) }) else {
                 continue;
             };
+            if func.compiled.is_some() {
+                continue;
+            }
             let slots: Vec<usize> = match &func.bytecode.compact {
                 Some(compact) => compact
                     .handler_contexts_for_pc(pc)
@@ -3284,7 +3297,7 @@ impl BexVm {
             .iter()
             .rev()
             .find_map(|frame| match frame {
-                Frame::Bytecode(frame) => Some(match self.get_object(frame.function) {
+                Frame::Baml(frame) => Some(match self.get_object(frame.function) {
                     Object::Function(function) => function.runtime_package,
                     Object::GenericFunction(function) => function.runtime_package,
                     Object::Closure(closure) => match unsafe { closure.function.get() } {
@@ -3510,7 +3523,7 @@ impl BexVm {
         resolved_const: Value,
     ) -> Result<bool, VmInternalError> {
         let frame_type_args = match &self.frames[frame_idx] {
-            Frame::Bytecode(frame) => frame.type_args.as_slice(),
+            Frame::Baml(frame) => frame.type_args.as_slice(),
             Frame::Native(_) => &[],
         };
         match raw_const {
@@ -4126,7 +4139,7 @@ impl BexVm {
     ) -> Option<(usize, usize)> {
         if <&bex_vm_types::RealizedTy>::try_from(template).is_err()
             || !matches!(&self.frames[frame_idx],
-                Frame::Bytecode(frame)
+                Frame::Baml(frame)
                     if frame.type_metadata.as_ref()
                         .is_none_or(|metadata| !metadata.binds_runtime_declaration(&self.heap)))
         {
@@ -4656,9 +4669,9 @@ impl BexVm {
                     }))
                 };
                 self.stack.extend(args.iter().copied());
-                self.frames.push(Frame::Bytecode(BytecodeFrame {
+                self.frames.push(Frame::Baml(BamlFrame {
                     function: dispatch_ptr,
-                    instruction_ptr: 0,
+                    execution: compiled::FrameExecution::Start,
                     locals_offset: StackIndex::from_raw(0),
                     type_args: effective_type_args,
                     type_metadata,
@@ -4797,6 +4810,7 @@ impl BexVm {
             kind: FunctionKind::Bytecode,
             telemetry_function_id: None,
             telemetry_registration: bex_vm_types::FunctionRegistration::default(),
+            compiled: None,
             telemetry_policy_id: btel_types::TelemetryPolicyId::none(),
             local_names: Vec::new(),
             debug_locals: Vec::new(),
@@ -4848,9 +4862,9 @@ impl BexVm {
 
         // Synthetic `$entry::` wrapper frame; the wrapped native/sysop emits
         // its own pair through the normal Call/SysOp instruction paths.
-        self.frames.push(Frame::Bytecode(BytecodeFrame {
+        self.frames.push(Frame::Baml(BamlFrame {
             function: entry_ptr,
-            instruction_ptr: 0,
+            execution: compiled::FrameExecution::Start,
             locals_offset: StackIndex::from_raw(0),
             type_args: Vec::new(),
             type_metadata: None,
@@ -4906,6 +4920,7 @@ impl BexVm {
             kind: FunctionKind::Bytecode,
             telemetry_function_id: None,
             telemetry_registration: bex_vm_types::FunctionRegistration::default(),
+            compiled: None,
             telemetry_policy_id: btel_types::TelemetryPolicyId::none(),
             local_names: Vec::new(),
             debug_locals: Vec::new(),
@@ -4954,9 +4969,9 @@ impl BexVm {
                 )
             })
         });
-        self.frames.push(Frame::Bytecode(BytecodeFrame {
+        self.frames.push(Frame::Baml(BamlFrame {
             function: entry_ptr,
-            instruction_ptr: 0,
+            execution: compiled::FrameExecution::Start,
             locals_offset: StackIndex::from_raw(0),
             type_args: Vec::new(),
             type_metadata: None,
@@ -5931,7 +5946,7 @@ impl BexVm {
         let top_bc = self
             .frames
             .iter()
-            .rposition(|f| matches!(f, Frame::Bytecode(_)));
+            .rposition(|f| matches!(f, Frame::Baml(_)));
         self.frames
             .iter()
             .enumerate()
@@ -5945,13 +5960,15 @@ impl BexVm {
                 }
                 let func = self.get_object(frame.function()).as_callable().ok()?;
                 match frame {
-                    Frame::Bytecode(frame) => {
+                    Frame::Baml(frame) => {
                         let pc = if Some(idx) == top_bc {
                             self.cur_pc
                         } else {
                             frame.faulting_pc
                         };
-                        let error_line = if let Some(compact) = &func.bytecode.compact {
+                        let error_line = if let Some(code) = &func.compiled {
+                            code.sites.get(pc).map_or(0, |site| site.line as usize)
+                        } else if let Some(compact) = &func.bytecode.compact {
                             compact.source_line_for_pc(pc)
                         } else {
                             func.bytecode.source_line_for_pc(pc)
@@ -6087,7 +6104,7 @@ impl BexVm {
             }
 
             // From here, frame is guaranteed Bytecode.
-            let Frame::Bytecode(frame) = frame else {
+            let Frame::Baml(frame) = frame else {
                 unreachable!("non-Native frames already handled above");
             };
             let (frame_faulting_pc, frame_locals_offset) = (frame.faulting_pc, frame.locals_offset);
@@ -6136,10 +6153,10 @@ impl BexVm {
                             + frame_function.real_local_count,
                     );
                     self.stack.push(Value::NULL);
-                    let Frame::Bytecode(frame) = &mut self.frames[depth] else {
+                    let Frame::Baml(frame) = &mut self.frames[depth] else {
                         unreachable!()
                     };
-                    frame.instruction_ptr = finish;
+                    frame.set_bytecode_pc(finish);
                     if let Some(evidence) = evidence.take() {
                         self.error_hook_fallback(evidence);
                     }
@@ -6166,7 +6183,11 @@ impl BexVm {
             // affect the hot per-instruction loop.
             // Use compact exception table when available (byte-offset PCs),
             // otherwise fall back to the legacy instruction-index table.
-            let handler_entry = if let Some(compact) = &frame_function.bytecode.compact {
+            let handler_entry = if frame_function.compiled.is_some() {
+                // Compiled site IDs are never bytecode handler-table PCs.
+                // The current admission contract excludes compiled handlers.
+                None
+            } else if let Some(compact) = &frame_function.bytecode.compact {
                 compact
                     .exception_handlers_for_pc(faulting_pc)
                     .max_by(|a, b| {
@@ -6224,10 +6245,10 @@ impl BexVm {
                 }
 
                 // Jump to the handler.
-                let Frame::Bytecode(bf) = &mut self.frames[depth] else {
+                let Frame::Baml(bf) = &mut self.frames[depth] else {
                     unreachable!("frame at depth is Bytecode");
                 };
-                bf.instruction_ptr = entry.handler_pc;
+                bf.set_bytecode_pc(entry.handler_pc);
 
                 // Update caller's frame_idx / function references.
                 *frame_idx = depth;
@@ -6268,7 +6289,7 @@ impl BexVm {
             let popped = self.frames.pop().expect("frame stack is not empty");
             self.pending_trace_hooks.retain(|hook| hook.frame < depth);
             match popped {
-                Frame::Bytecode(bf) => {
+                Frame::Baml(bf) => {
                     self.stack.drain(bf.locals_offset..);
                     // Restore the caller's identity after unwinding this frame.
                 }
@@ -6291,7 +6312,7 @@ impl BexVm {
     fn find_cause_context(&self) -> Value {
         let mut innermost_bc = true;
         for depth in (0..self.frames.len()).rev() {
-            let Frame::Bytecode(bf) = &self.frames[depth] else {
+            let Frame::Baml(bf) = &self.frames[depth] else {
                 continue; // native frames hold no handler bodies
             };
             let pc = if innermost_bc {
@@ -6305,6 +6326,9 @@ impl BexVm {
             let Ok(func) = (unsafe { self.load_function(depth) }) else {
                 return Value::NULL;
             };
+            if func.compiled.is_some() {
+                continue;
+            }
             // Innermost (narrowest) handler body wins — largest handler_pc.
             let entry = if let Some(compact) = &func.bytecode.compact {
                 compact.handler_context_for_pc(pc)
@@ -6724,7 +6748,7 @@ impl BexVm {
         // and stack traces. `cur_pc` holds this call instruction's start.
         let call_site = self.cur_pc;
 
-        if let Some(Frame::Bytecode(bf)) = self.frames.get_mut(*frame_idx) {
+        if let Some(Frame::Baml(bf)) = self.frames.get_mut(*frame_idx) {
             bf.faulting_pc = call_site;
         }
 
@@ -6967,7 +6991,7 @@ impl BexVm {
                 let caller_pc = if caller_frame_idx == *frame_idx {
                     call_site
                 } else {
-                    let Frame::Bytecode(caller) = &self.frames[caller_frame_idx] else {
+                    let Frame::Baml(caller) = &self.frames[caller_frame_idx] else {
                         unreachable!()
                     };
                     caller.faulting_pc
@@ -7012,7 +7036,7 @@ impl BexVm {
                         .and_then(|index| self.frame_function_identity(index));
                     let caller_is_observed = matches!(
                         self.frames.get(caller_frame_idx),
-                        Some(Frame::Bytecode(BytecodeFrame {
+                        Some(Frame::Baml(BamlFrame {
                             telemetry: Some(_),
                             ..
                         }))
@@ -7020,7 +7044,7 @@ impl BexVm {
                     let caller_pc = if caller_frame_idx == *frame_idx {
                         call_site
                     } else {
-                        let Frame::Bytecode(caller) = &self.frames[caller_frame_idx] else {
+                        let Frame::Baml(caller) = &self.frames[caller_frame_idx] else {
                             unreachable!("native continuation retains its bytecode caller");
                         };
                         caller.faulting_pc
@@ -7067,9 +7091,9 @@ impl BexVm {
                 // Construct after reserving capacity so the frame can be written
                 // directly into the vector instead of moved through a temporary.
                 self.frames.extend(std::iter::once_with(|| {
-                    Frame::Bytecode(BytecodeFrame {
+                    Frame::Baml(BamlFrame {
                         function: callee_ptr,
-                        instruction_ptr: 0,
+                        execution: compiled::FrameExecution::Start,
                         locals_offset,
                         type_args: initial_type_args.to_vec(),
                         type_metadata: None,
@@ -7135,6 +7159,10 @@ impl BexVm {
         }
 
         if self.should_early_yield() {
+            if matches!(self.frames.get(*frame_idx), Some(Frame::Baml(frame)) if matches!(frame.execution, compiled::FrameExecution::Start))
+            {
+                self.cur_pc = 0;
+            }
             return Ok(Some(VmExecState::EarlyYield));
         }
         Ok(None)
@@ -7202,7 +7230,7 @@ impl BexVm {
         if (!options.type_args.is_empty() || !options.type_values.is_empty())
             && self.frames.len() == frames_before + 1
             && *frame_idx == frames_before
-            && let Some(Frame::Bytecode(frame)) = self.frames.get_mut(frames_before)
+            && let Some(Frame::Baml(frame)) = self.frames.get_mut(frames_before)
         {
             let initial_type_arg_count = frame.type_args.len();
             frame.type_args.extend_from_slice(options.type_args);
@@ -7442,7 +7470,7 @@ impl BexVm {
         value: Option<Value>,
     ) {
         let telemetry = match self.frames.get_mut(frame_idx) {
-            Some(Frame::Bytecode(frame)) => frame.telemetry.take(),
+            Some(Frame::Baml(frame)) => frame.telemetry.take(),
             _ => None,
         };
         let Some(telemetry) = telemetry else {
@@ -7470,7 +7498,7 @@ impl BexVm {
         evidence: Option<&mut error_evidence::UnwindEvidence>,
     ) {
         let telemetry = match self.frames.get_mut(frame_idx) {
-            Some(Frame::Bytecode(frame)) => frame.telemetry.take(),
+            Some(Frame::Baml(frame)) => frame.telemetry.take(),
             _ => None,
         };
         let Some(telemetry) = telemetry else {
@@ -7492,7 +7520,7 @@ impl BexVm {
             .telemetry
             .as_mut()
             .expect("observed invocation has telemetry");
-        if let Frame::Bytecode(frame) = &self.frames[frame_idx] {
+        if let Frame::Baml(frame) = &self.frames[frame_idx] {
             state.set_context(frame.context.clone());
         }
         // SAFETY: the unwinder holds the heap permit, and the frame and the
@@ -7526,7 +7554,7 @@ impl BexVm {
             .telemetry
             .as_mut()
             .expect("observed invocation has telemetry");
-        if let Frame::Bytecode(frame) = &self.frames[frame_idx] {
+        if let Frame::Baml(frame) = &self.frames[frame_idx] {
             state.set_context(frame.context.clone());
         }
         // SAFETY: completion holds the heap permit and the result/error is live.
@@ -7540,7 +7568,7 @@ impl BexVm {
     }
 
     fn frame_wants_error_capture(&self, frame_idx: usize, function: &Function) -> bool {
-        let (Some(Frame::Bytecode(frame)), Some(state)) =
+        let (Some(Frame::Baml(frame)), Some(state)) =
             (self.frames.get(frame_idx), self.telemetry.as_ref())
         else {
             return false;
@@ -7688,7 +7716,7 @@ impl BexVm {
     /// Resolve native continuations and pending hook targets to their caller.
     fn bytecode_caller_index(&self, frame_idx: usize) -> usize {
         let index = match &self.frames[frame_idx] {
-            Frame::Bytecode(_) => frame_idx,
+            Frame::Baml(_) => frame_idx,
             Frame::Native(frame) => frame.bytecode_caller,
         };
         if let Some(pending) = self
@@ -7728,7 +7756,7 @@ impl BexVm {
     #[inline(always)]
     fn begin_telemetry_wait(&mut self, frame_idx: usize) {
         let frame_idx = self.bytecode_caller_index(frame_idx);
-        if matches!(&self.frames[frame_idx], Frame::Bytecode(frame) if frame.telemetry.is_some()) {
+        if matches!(&self.frames[frame_idx], Frame::Baml(frame) if frame.telemetry.is_some()) {
             debug_assert!(self.pending_telemetry_wait.is_none());
             self.pending_telemetry_wait = Some((
                 frame_idx,
@@ -7764,7 +7792,7 @@ impl BexVm {
     /// Its duration was already measured, so reacquisition time is excluded.
     pub fn record_telemetry_wait(&mut self, frame_idx: Option<usize>, elapsed: ClockDuration) {
         if let Some(frame_idx) = frame_idx
-            && let Some(Frame::Bytecode(frame)) = self.frames.get_mut(frame_idx)
+            && let Some(Frame::Baml(frame)) = self.frames.get_mut(frame_idx)
             && let Some(telemetry) = &mut frame.telemetry
         {
             telemetry.add_await(elapsed);
@@ -7783,7 +7811,7 @@ impl BexVm {
             self.telemetry.take().unwrap().abandon();
             self.pending_telemetry_wait = None;
             for frame in &mut self.frames {
-                if let Frame::Bytecode(frame) = frame {
+                if let Frame::Baml(frame) = frame {
                     frame.telemetry = None;
                 }
             }
@@ -7821,7 +7849,7 @@ impl BexVm {
 
     fn restamp_entry(&mut self, at: btel_types::ClockInstant) {
         for frame in &mut self.frames {
-            if let Frame::Bytecode(frame) = frame
+            if let Frame::Baml(frame) = frame
                 && let Some(telemetry) = &mut frame.telemetry
             {
                 telemetry.entered_at = at;
@@ -7854,7 +7882,7 @@ impl BexVm {
             && self
                 .frames
                 .iter()
-                .any(|frame| matches!(frame, Frame::Bytecode(frame) if frame.telemetry.is_some()))
+                .any(|frame| matches!(frame, Frame::Baml(frame) if frame.telemetry.is_some()))
             && self
                 .panic_class_ptrs
                 .get(PanicClass::Cancelled as usize)
@@ -7965,7 +7993,7 @@ impl BexVm {
         // them anyway. If every frame is Native, no bytecode catch handler
         // can match; surface as unhandled.
         let mut seed_idx = self.frames.len() - 1;
-        while !matches!(&self.frames[seed_idx], Frame::Bytecode(_)) {
+        while !matches!(&self.frames[seed_idx], Frame::Baml(_)) {
             if seed_idx == 0 {
                 self.record_unwound_without_frames(&thrown);
                 let trace = self.capture_user_stack_trace();
@@ -8258,8 +8286,10 @@ impl BexVm {
     /// Key optimization: `pc` and `code` are kept as local variables in the hot
     /// loop, avoiding frame access on every instruction. They are only saved back
     /// to the frame when control flow changes (calls, returns, exceptions, yields).
-    #[allow(clippy::inline_always)]
-    #[inline(always)]
+    // Keep the mixed-backend driver out of exec's telemetry/error wrapper.
+    // Forced inlining after adding direct calls introduced a VM-pointer reload
+    // per opcode on ARM64. run_compact still inlines into this execution loop.
+    #[inline(never)]
     fn exec_compact(&mut self) -> Result<VmExecState, VmError> {
         if self.frames.is_empty() {
             return Ok(VmExecState::Complete(Value::NULL));
@@ -8277,6 +8307,15 @@ impl BexVm {
                     unreachable!("just matched Some(Frame::Native(_))");
                 };
                 let native_fn_ptr = nf.function;
+
+                // A hidden continuation executes on behalf of its visible
+                // caller. The completed callback may have used another source
+                // coordinate system, so restore the call site before resuming.
+                if let Some(Frame::Baml(caller)) = self.frames.get(nf.bytecode_caller) {
+                    self.cur_pc = caller.faulting_pc;
+                    frame_idx = nf.bytecode_caller;
+                    function = unsafe { self.load_function(frame_idx)? };
+                }
 
                 let resumed = nf.continuation.call(self, v);
                 self.settle();
@@ -8344,15 +8383,30 @@ impl BexVm {
             frame_idx = self.frames.len() - 1;
             function = unsafe { self.load_function(frame_idx)? };
 
+            if function.compiled.is_some() {
+                match self.run_compiled(&mut frame_idx, &mut function) {
+                    Ok(Some(state)) => return Ok(state),
+                    Ok(None) => continue,
+                    Err(VmError::Thrown(thrown)) => {
+                        self.try_unwind_exception(&mut frame_idx, &mut function, thrown)?;
+                        continue;
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+
             // ── Extract locals for the tight inner dispatch loop ──────────
             // SAFETY: code is &'static because Function is &'static.
             let mut code: &'static [u8] = &function.bytecode.compact.as_ref().unwrap().code;
-            let Frame::Bytecode(bf) = &mut self.frames[frame_idx] else {
+            let Frame::Baml(bf) = &mut self.frames[frame_idx] else {
                 unreachable!(
                     "exec_compact loop frame is always Bytecode after continuation handler"
                 );
             };
-            let mut pc = bf.instruction_ptr;
+            if matches!(bf.execution, compiled::FrameExecution::Start) {
+                bf.set_bytecode_pc(0);
+            }
+            let mut pc = bf.bytecode_pc().expect("interpreted frame");
 
             // Exact calls and bytecode returns stay in `run_compact`. Other
             // transitions, unwinds, yields, and errors reach this handler. The
@@ -8385,8 +8439,8 @@ impl BexVm {
                     Ok(Some(state)) => {
                         // Yielding — save pc to current frame so we can resume.
                         if frame_idx == dispatch_frame_idx {
-                            if let Some(Frame::Bytecode(bf)) = self.frames.get_mut(frame_idx) {
-                                bf.instruction_ptr = pc;
+                            if let Some(Frame::Baml(bf)) = self.frames.get_mut(frame_idx) {
+                                bf.set_bytecode_pc(pc);
                             }
                         }
                         return Ok(state);
@@ -8579,8 +8633,7 @@ impl BexVm {
                         let slot = { read_u32_unchecked(code, pc) as usize };
                         // SAFETY: dispatch loop always runs with a Bytecode frame on top.
                         #[allow(unsafe_code)]
-                        let Frame::Bytecode(bf) =
-                            (unsafe { self.frames.get_unchecked(*frame_idx) })
+                        let Frame::Baml(bf) = (unsafe { self.frames.get_unchecked(*frame_idx) })
                         else {
                             unreachable!()
                         };
@@ -8593,8 +8646,7 @@ impl BexVm {
                         let slot = { read_u32_unchecked(code, pc) as usize };
                         // SAFETY: dispatch loop always runs with a Bytecode frame on top.
                         #[allow(unsafe_code)]
-                        let Frame::Bytecode(bf) =
-                            (unsafe { self.frames.get_unchecked(*frame_idx) })
+                        let Frame::Baml(bf) = (unsafe { self.frames.get_unchecked(*frame_idx) })
                         else {
                             unreachable!()
                         };
@@ -8609,8 +8661,7 @@ impl BexVm {
                         let a = { read_u32_unchecked(code, pc) as usize };
                         let b = { read_u32_unchecked(code, pc) as usize };
                         #[allow(unsafe_code)]
-                        let Frame::Bytecode(bf) =
-                            (unsafe { self.frames.get_unchecked(*frame_idx) })
+                        let Frame::Baml(bf) = (unsafe { self.frames.get_unchecked(*frame_idx) })
                         else {
                             unreachable!()
                         };
@@ -8626,8 +8677,7 @@ impl BexVm {
                         let a = { read_u32_unchecked(code, pc) as usize };
                         let b = { read_u32_unchecked(code, pc) as usize };
                         #[allow(unsafe_code)]
-                        let Frame::Bytecode(bf) =
-                            (unsafe { self.frames.get_unchecked(*frame_idx) })
+                        let Frame::Baml(bf) = (unsafe { self.frames.get_unchecked(*frame_idx) })
                         else {
                             unreachable!()
                         };
@@ -8642,7 +8692,7 @@ impl BexVm {
 
                     OpCode::StoreVarLoadVar => {
                         let slot = { read_u32_unchecked(code, pc) as usize };
-                        let Frame::Bytecode(bf) = &self.frames[*frame_idx] else {
+                        let Frame::Baml(bf) = &self.frames[*frame_idx] else {
                             unreachable!()
                         };
                         let local_var_index = Self::local_slot_stack_index(bf.locals_offset, slot);
@@ -9103,6 +9153,7 @@ impl BexVm {
                             let callee_object: &'static Object = callee_ptr.get();
                             if let Object::Function(callee) = callee_object
                                 && matches!(callee.kind, FunctionKind::Bytecode)
+                                && callee.compiled.is_none()
                             {
                                 debug_assert_eq!(ntypeargs, 0);
                                 // Eager ok_or constructs/drops VmInternalError
@@ -9127,7 +9178,7 @@ impl BexVm {
                                     let actual_caller = self.frame_function_identity(*frame_idx);
                                     let caller_is_observed = matches!(
                                         self.frames.get(*frame_idx),
-                                        Some(Frame::Bytecode(BytecodeFrame {
+                                        Some(Frame::Baml(BamlFrame {
                                             telemetry: Some(_),
                                             ..
                                         }))
@@ -9154,15 +9205,15 @@ impl BexVm {
                                 } else {
                                     None
                                 };
-                                let Frame::Bytecode(caller) = &mut self.frames[*frame_idx] else {
+                                let Frame::Baml(caller) = &mut self.frames[*frame_idx] else {
                                     verifier_unreachable!()
                                 };
-                                caller.instruction_ptr = *pc;
+                                caller.set_bytecode_pc(*pc);
                                 caller.faulting_pc = self.cur_pc;
                                 self.frames.extend(std::iter::once_with(|| {
-                                    Frame::Bytecode(BytecodeFrame {
+                                    Frame::Baml(BamlFrame {
                                         function: callee_ptr,
-                                        instruction_ptr: 0,
+                                        execution: compiled::FrameExecution::Bytecode(0),
                                         locals_offset,
                                         type_args: Vec::new(),
                                         type_metadata: None,
@@ -9178,6 +9229,7 @@ impl BexVm {
                                 *frame_idx = self.frames.len() - 1;
                                 *function = callee;
                                 if self.should_early_yield() {
+                                    self.cur_pc = 0;
                                     return Ok(Some(VmExecState::EarlyYield));
                                 }
                                 // No engine handoff: enter the known bytecode
@@ -9204,10 +9256,10 @@ impl BexVm {
                         let locals_offset = StackIndex::from_raw(args_offset);
 
                         // Save pc as return address before pushing new frame.
-                        let Frame::Bytecode(bf) = &mut self.frames[*frame_idx] else {
+                        let Frame::Baml(bf) = &mut self.frames[*frame_idx] else {
                             verifier_unreachable!()
                         };
-                        bf.instruction_ptr = *pc;
+                        bf.set_bytecode_pc(*pc);
 
                         let result = if ntypeargs == 0
                             && self.pending_call_type_args.is_empty()
@@ -9398,10 +9450,10 @@ impl BexVm {
                         let locals_offset = StackIndex::from_raw(args_offset);
 
                         // Save pc as return address before pushing the new frame.
-                        let Frame::Bytecode(bf) = &mut self.frames[*frame_idx] else {
+                        let Frame::Baml(bf) = &mut self.frames[*frame_idx] else {
                             verifier_unreachable!()
                         };
-                        bf.instruction_ptr = *pc;
+                        bf.set_bytecode_pc(*pc);
 
                         let result = if type_args.is_empty()
                             && method_type_args.is_none()
@@ -9434,10 +9486,10 @@ impl BexVm {
                     // ── CallIndirect ──────────────────────────────────────────────
                     OpCode::CallIndirect => {
                         // Save pc as return address before any call.
-                        let Frame::Bytecode(bf) = &mut self.frames[*frame_idx] else {
+                        let Frame::Baml(bf) = &mut self.frames[*frame_idx] else {
                             verifier_unreachable!()
                         };
-                        bf.instruction_ptr = *pc;
+                        bf.set_bytecode_pc(*pc);
 
                         let callee_slot = self.stack.ensure_stack_top();
                         let callee_value = self.stack[callee_slot];
@@ -9569,7 +9621,11 @@ impl BexVm {
                     OpCode::Return => {
                         let result = self.stack.get_at(self.stack.ensure_stack_top());
 
-                        let Frame::Bytecode(bf) = &mut self.frames[*frame_idx] else {
+                        // Bytecode already owns an initialized result slot. Keep
+                        // this in-place return in the opcode handler: routing it
+                        // through compiled return housekeeping changed LLVM's
+                        // register allocation for the entire dispatch loop.
+                        let Frame::Baml(bf) = &mut self.frames[*frame_idx] else {
                             unreachable!()
                         };
                         let locals_offset = bf.locals_offset;
@@ -9596,6 +9652,15 @@ impl BexVm {
                         // SAFETY: this instruction is executing the bytecode frame
                         // accessed above; stack operations cannot remove that frame.
                         unsafe { self.frames.no_return_pop() };
+                        // Retain the mixed-backend source-coordinate correction.
+                        if let Some(Frame::Baml(caller)) = self
+                            .frames
+                            .iter()
+                            .rev()
+                            .find(|frame| matches!(frame, Frame::Baml(_)))
+                        {
+                            self.cur_pc = caller.faulting_pc;
+                        }
                         let context = self.current_context().clone();
                         if let Some(telemetry) = &mut self.telemetry {
                             telemetry.set_context(context);
@@ -9612,8 +9677,11 @@ impl BexVm {
                         if self.should_early_yield() {
                             return Ok(Some(VmExecState::EarlyYield));
                         }
-                        if let Frame::Bytecode(caller) = &self.frames[*frame_idx] {
-                            *pc = caller.instruction_ptr;
+                        if let Frame::Baml(caller) = &self.frames[*frame_idx] {
+                            let Some(caller_pc) = caller.bytecode_pc() else {
+                                return Ok(None);
+                            };
+                            *pc = caller_pc;
                             *function = self.load_function(*frame_idx)?;
                             *code = &function.bytecode.compact.as_ref().unwrap().code;
                             *dispatch_frame_idx = *frame_idx;
@@ -9761,8 +9829,8 @@ impl BexVm {
                             VmThrown::fresh(self.stack.ensure_pop())
                         };
                         // Save pc before unwinding (handler lookup needs it).
-                        if let Some(Frame::Bytecode(bf)) = self.frames.get_mut(*frame_idx) {
-                            bf.instruction_ptr = *pc;
+                        if let Some(Frame::Baml(bf)) = self.frames.get_mut(*frame_idx) {
+                            bf.set_bytecode_pc(*pc);
                         }
                         self.try_unwind_exception(frame_idx, function, thrown)?;
                         // A handler was found; sync the local `pc` to its entry.
@@ -9771,8 +9839,8 @@ impl BexVm {
                         // instead of jumping to the handler. (Cross-frame unwinds
                         // reload `pc` on the frame switch, so this is a no-op there.)
                         // Cold path — does not affect the hot per-instruction loop.
-                        if let Some(Frame::Bytecode(bf)) = self.frames.get(*frame_idx) {
-                            *pc = bf.instruction_ptr;
+                        if let Some(Frame::Baml(bf)) = self.frames.get(*frame_idx) {
+                            *pc = bf.bytecode_pc().expect("interpreted frame");
                         }
                         if self.should_early_yield() {
                             return Ok(Some(VmExecState::EarlyYield));
@@ -9914,7 +9982,7 @@ impl BexVm {
                             resolved_const,
                         )?;
                         if matched {
-                            let Frame::Bytecode(bf) = &self.frames[*frame_idx] else {
+                            let Frame::Baml(bf) = &self.frames[*frame_idx] else {
                                 unreachable!()
                             };
                             let destination =
@@ -9954,8 +10022,8 @@ impl BexVm {
                         };
                         if is_panic {
                             // Save pc before unwinding (handler lookup needs it).
-                            if let Some(Frame::Bytecode(bf)) = self.frames.get_mut(*frame_idx) {
-                                bf.instruction_ptr = *pc;
+                            if let Some(Frame::Baml(bf)) = self.frames.get_mut(*frame_idx) {
+                                bf.set_bytecode_pc(*pc);
                             }
                             self.try_unwind_exception(
                                 frame_idx,
@@ -9967,8 +10035,8 @@ impl BexVm {
                             // wildcard catch rethrowing a panic to an outer catch in
                             // the same function — must jump to the handler instead of
                             // falling through to the not-a-panic continuation.
-                            if let Some(Frame::Bytecode(bf)) = self.frames.get(*frame_idx) {
-                                *pc = bf.instruction_ptr;
+                            if let Some(Frame::Baml(bf)) = self.frames.get(*frame_idx) {
+                                *pc = bf.bytecode_pc().expect("interpreted frame");
                             }
                         }
                         if self.should_early_yield() {
@@ -10024,7 +10092,7 @@ impl BexVm {
                                 if function.runtime_package.is_null()
                                     && <&bex_vm_types::RealizedTy>::try_from(template).is_ok()
                                     && matches!(&self.frames[*frame_idx],
-                                    Frame::Bytecode(frame)
+                                    Frame::Baml(frame)
                                         if frame.type_metadata.as_ref()
                                             .is_none_or(|metadata| !metadata.binds_runtime_declaration(&self.heap))) =>
                             {
@@ -10052,7 +10120,7 @@ impl BexVm {
                                 &template
                             {
                                 match &self.frames[*frame_idx] {
-                                    Frame::Bytecode(frame) => frame
+                                    Frame::Baml(frame) => frame
                                         .type_metadata
                                         .as_ref()
                                         .and_then(|metadata| metadata.values.get(*slot as usize))
@@ -10078,7 +10146,7 @@ impl BexVm {
                                         realized.clone()
                                     } else {
                                         let frame_type_args =
-                                            if let Frame::Bytecode(bf) = &self.frames[*frame_idx] {
+                                            if let Frame::Baml(bf) = &self.frames[*frame_idx] {
                                                 bf.type_args.clone()
                                             } else {
                                                 vec![]
@@ -10107,7 +10175,7 @@ impl BexVm {
                         let slot = read_u32_unchecked(code, pc) as usize;
                         let value = self.stack.ensure_pop();
                         let type_value = self.type_operand_value(value)?;
-                        let Frame::Bytecode(frame) = &mut self.frames[*frame_idx] else {
+                        let Frame::Baml(frame) = &mut self.frames[*frame_idx] else {
                             unreachable!("compact bytecode runs in a bytecode frame")
                         };
                         frame
@@ -10311,7 +10379,7 @@ impl BexVm {
                     // ── LoadDeref / StoreDeref ────────────────────────────────────
                     OpCode::LoadDeref => {
                         let slot = { read_u32_unchecked(code, pc) as usize };
-                        let Frame::Bytecode(bf) = &self.frames[*frame_idx] else {
+                        let Frame::Baml(bf) = &self.frames[*frame_idx] else {
                             unreachable!()
                         };
                         let cell_value =
@@ -10337,7 +10405,7 @@ impl BexVm {
                     OpCode::StoreDeref => {
                         let slot = { read_u32_unchecked(code, pc) as usize };
                         let value = self.stack.ensure_pop();
-                        let Frame::Bytecode(bf) = &self.frames[*frame_idx] else {
+                        let Frame::Baml(bf) = &self.frames[*frame_idx] else {
                             unreachable!()
                         };
                         let cell_value =
@@ -10364,7 +10432,7 @@ impl BexVm {
                     // ── LoadCapture / StoreCapture / CaptureRef ───────────────────
                     OpCode::LoadCapture => {
                         let idx = { read_u32_unchecked(code, pc) as usize };
-                        let Frame::Bytecode(bf) = &self.frames[*frame_idx] else {
+                        let Frame::Baml(bf) = &self.frames[*frame_idx] else {
                             unreachable!()
                         };
                         let closure_ptr = bf.function;
@@ -10398,7 +10466,7 @@ impl BexVm {
                     OpCode::StoreCapture => {
                         let idx = { read_u32_unchecked(code, pc) as usize };
                         let value = self.stack.ensure_pop();
-                        let Frame::Bytecode(bf) = &self.frames[*frame_idx] else {
+                        let Frame::Baml(bf) = &self.frames[*frame_idx] else {
                             unreachable!()
                         };
                         let closure_ptr = bf.function;
@@ -10432,7 +10500,7 @@ impl BexVm {
 
                     OpCode::CaptureRef => {
                         let idx = { read_u32_unchecked(code, pc) as usize };
-                        let Frame::Bytecode(bf) = &self.frames[*frame_idx] else {
+                        let Frame::Baml(bf) = &self.frames[*frame_idx] else {
                             unreachable!()
                         };
                         let closure_ptr = bf.function;
@@ -10956,8 +11024,7 @@ impl BexVm {
                         // `cur_pc` (the frame's `faulting_pc` is no longer updated
                         // per-op; it only holds outer frames' call-site PCs).
                         let cur_pc = self.cur_pc;
-                        let source_location = if let Frame::Bytecode(bf) = &self.frames[*frame_idx]
-                        {
+                        let source_location = if let Frame::Baml(bf) = &self.frames[*frame_idx] {
                             let pc = cur_pc;
                             let func_obj = self.get_object(bf.function).as_callable().ok();
                             func_obj

@@ -1082,7 +1082,10 @@ fn adopt(object: &mut Object, package_ptr: HeapPtr) {
             alias.type_tag = TypeTag::fresh_dynamic();
             alias.owner = package_ptr;
         }
-        Object::Function(function) => function.runtime_package = package_ptr,
+        Object::Function(function) => {
+            function.compiled = None;
+            function.runtime_package = package_ptr;
+        }
         Object::GenericFunction(function) => function.runtime_package = package_ptr,
         // Neither a declaration nor a body: nothing to mint or own.
         Object::String(_)

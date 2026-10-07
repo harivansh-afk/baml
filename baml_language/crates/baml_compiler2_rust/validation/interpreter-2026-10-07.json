@@ -1,0 +1,761 @@
+{
+  "shared_host": true,
+  "cpus": "15,16",
+  "telemetry": "off",
+  "tokio_workers": 2,
+  "binary_sha256": {
+    "base": "ebf750141f6491a567ee724e109a5a82a22c11250f9efd3df4170f21b7bf726d",
+    "head": "ba7596ad20f3818c6b768548f98aaeae227718b39159c97e78b8ba8c240defe1"
+  },
+  "divan_arguments": [
+    "--bench",
+    "--color",
+    "never",
+    "--timer",
+    "os",
+    "--sample-count",
+    "16",
+    "--sample-size",
+    "1",
+    "--max-time",
+    "2"
+  ],
+  "trials": [
+    {
+      "case": "call_chain_100x10k",
+      "revision": "head",
+      "trial": 2,
+      "median_ns": 18740000.0,
+      "mean_ns": 18770000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                           fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_call_chain_100x10k  18.55 ms      \u2502 18.98 ms      \u2502 18.74 ms      \u2502 18.77 ms      \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "closure_apply_1m",
+      "revision": "base",
+      "trial": 2,
+      "median_ns": 179800000.0,
+      "mean_ns": 179700000.0,
+      "samples": 12,
+      "iterations": 12,
+      "stdout": "runtime_benchmark                         fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_closure_apply_1m  178.5 ms      \u2502 181 ms        \u2502 179.8 ms      \u2502 179.7 ms      \u2502 12      \u2502 12\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "call_chain_100x10k",
+      "revision": "base",
+      "trial": 0,
+      "median_ns": 19070000.0,
+      "mean_ns": 19090000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                           fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_call_chain_100x10k  18.85 ms      \u2502 19.4 ms       \u2502 19.07 ms      \u2502 19.09 ms      \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "closure_apply_1m",
+      "revision": "head",
+      "trial": 4,
+      "median_ns": 176600000.0,
+      "mean_ns": 176800000.0,
+      "samples": 12,
+      "iterations": 12,
+      "stdout": "runtime_benchmark                         fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_closure_apply_1m  175.4 ms      \u2502 178.2 ms      \u2502 176.6 ms      \u2502 176.8 ms      \u2502 12      \u2502 12\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "pure_call_1m",
+      "revision": "head",
+      "trial": 2,
+      "median_ns": 37300000.0,
+      "mean_ns": 37310000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                     fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_pure_call_1m  37.05 ms      \u2502 37.63 ms      \u2502 37.3 ms       \u2502 37.31 ms      \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "nested_loops_500x500",
+      "revision": "head",
+      "trial": 2,
+      "median_ns": 5847000.0,
+      "mean_ns": 5887000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                             fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_nested_loops_500x500  5.785 ms      \u2502 6.451 ms      \u2502 5.847 ms      \u2502 5.887 ms      \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "nested_loops_500x500",
+      "revision": "head",
+      "trial": 4,
+      "median_ns": 5830000.0,
+      "mean_ns": 5831000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                             fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_nested_loops_500x500  5.74 ms       \u2502 5.957 ms      \u2502 5.83 ms       \u2502 5.831 ms      \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "pure_call_1m",
+      "revision": "head",
+      "trial": 4,
+      "median_ns": 37300000.0,
+      "mean_ns": 37310000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                     fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_pure_call_1m  37.06 ms      \u2502 37.68 ms      \u2502 37.3 ms       \u2502 37.31 ms      \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "pure_call_1m",
+      "revision": "head",
+      "trial": 0,
+      "median_ns": 37280000.0,
+      "mean_ns": 37300000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                     fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_pure_call_1m  36.99 ms      \u2502 37.56 ms      \u2502 37.28 ms      \u2502 37.3 ms       \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "call_chain_100x10k",
+      "revision": "head",
+      "trial": 3,
+      "median_ns": 18730000.0,
+      "mean_ns": 18790000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                           fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_call_chain_100x10k  18.58 ms      \u2502 19.06 ms      \u2502 18.73 ms      \u2502 18.79 ms      \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "nested_loops_500x500",
+      "revision": "base",
+      "trial": 1,
+      "median_ns": 5988000.0,
+      "mean_ns": 5988000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                             fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_nested_loops_500x500  5.872 ms      \u2502 6.067 ms      \u2502 5.988 ms      \u2502 5.988 ms      \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "closure_apply_1m",
+      "revision": "head",
+      "trial": 2,
+      "median_ns": 178600000.0,
+      "mean_ns": 178900000.0,
+      "samples": 12,
+      "iterations": 12,
+      "stdout": "runtime_benchmark                         fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_closure_apply_1m  178.2 ms      \u2502 180.8 ms      \u2502 178.6 ms      \u2502 178.9 ms      \u2502 12      \u2502 12\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "call_chain_100x10k",
+      "revision": "head",
+      "trial": 1,
+      "median_ns": 18690000.0,
+      "mean_ns": 18740000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                           fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_call_chain_100x10k  18.63 ms      \u2502 18.96 ms      \u2502 18.69 ms      \u2502 18.74 ms      \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "array_build_sum_100k",
+      "revision": "head",
+      "trial": 2,
+      "median_ns": 35910000.0,
+      "mean_ns": 35890000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                             fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_array_build_sum_100k  35.56 ms      \u2502 36.3 ms       \u2502 35.91 ms      \u2502 35.89 ms      \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "array_build_sum_100k",
+      "revision": "base",
+      "trial": 2,
+      "median_ns": 36250000.0,
+      "mean_ns": 36280000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                             fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_array_build_sum_100k  35.87 ms      \u2502 37.04 ms      \u2502 36.25 ms      \u2502 36.28 ms      \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "nested_loops_500x500",
+      "revision": "base",
+      "trial": 2,
+      "median_ns": 5994000.0,
+      "mean_ns": 5999000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                             fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_nested_loops_500x500  5.933 ms      \u2502 6.128 ms      \u2502 5.994 ms      \u2502 5.999 ms      \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "array_build_sum_100k",
+      "revision": "head",
+      "trial": 0,
+      "median_ns": 35960000.0,
+      "mean_ns": 35960000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                             fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_array_build_sum_100k  35.62 ms      \u2502 36.32 ms      \u2502 35.96 ms      \u2502 35.96 ms      \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "array_build_sum_100k",
+      "revision": "head",
+      "trial": 4,
+      "median_ns": 35800000.0,
+      "mean_ns": 35910000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                             fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_array_build_sum_100k  35.58 ms      \u2502 36.67 ms      \u2502 35.8 ms       \u2502 35.91 ms      \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "array_build_sum_100k",
+      "revision": "base",
+      "trial": 4,
+      "median_ns": 36060000.0,
+      "mean_ns": 36110000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                             fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_array_build_sum_100k  35.67 ms      \u2502 36.87 ms      \u2502 36.06 ms      \u2502 36.11 ms      \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "pure_call_1m",
+      "revision": "base",
+      "trial": 2,
+      "median_ns": 38250000.0,
+      "mean_ns": 38230000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                     fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_pure_call_1m  37.92 ms      \u2502 38.58 ms      \u2502 38.25 ms      \u2502 38.23 ms      \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "nested_loops_500x500",
+      "revision": "base",
+      "trial": 4,
+      "median_ns": 6034000.0,
+      "mean_ns": 6027000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                             fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_nested_loops_500x500  5.921 ms      \u2502 6.095 ms      \u2502 6.034 ms      \u2502 6.027 ms      \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "closure_apply_1m",
+      "revision": "base",
+      "trial": 3,
+      "median_ns": 179500000.0,
+      "mean_ns": 179400000.0,
+      "samples": 12,
+      "iterations": 12,
+      "stdout": "runtime_benchmark                         fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_closure_apply_1m  178.5 ms      \u2502 180 ms        \u2502 179.5 ms      \u2502 179.4 ms      \u2502 12      \u2502 12\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "closure_apply_1m",
+      "revision": "base",
+      "trial": 4,
+      "median_ns": 179500000.0,
+      "mean_ns": 180300000.0,
+      "samples": 12,
+      "iterations": 12,
+      "stdout": "runtime_benchmark                         fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_closure_apply_1m  179 ms        \u2502 186.6 ms      \u2502 179.5 ms      \u2502 180.3 ms      \u2502 12      \u2502 12\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "closure_apply_1m",
+      "revision": "head",
+      "trial": 1,
+      "median_ns": 175400000.0,
+      "mean_ns": 175400000.0,
+      "samples": 12,
+      "iterations": 12,
+      "stdout": "runtime_benchmark                         fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_closure_apply_1m  174.6 ms      \u2502 176.2 ms      \u2502 175.4 ms      \u2502 175.4 ms      \u2502 12      \u2502 12\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "pure_call_1m",
+      "revision": "head",
+      "trial": 1,
+      "median_ns": 37830000.0,
+      "mean_ns": 37990000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                     fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_pure_call_1m  37.56 ms      \u2502 40.61 ms      \u2502 37.83 ms      \u2502 37.99 ms      \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "array_build_sum_100k",
+      "revision": "head",
+      "trial": 1,
+      "median_ns": 36100000.0,
+      "mean_ns": 36200000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                             fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_array_build_sum_100k  35.84 ms      \u2502 36.89 ms      \u2502 36.1 ms       \u2502 36.2 ms       \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "call_chain_100x10k",
+      "revision": "head",
+      "trial": 4,
+      "median_ns": 18940000.0,
+      "mean_ns": 18930000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                           fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_call_chain_100x10k  18.81 ms      \u2502 19.07 ms      \u2502 18.94 ms      \u2502 18.93 ms      \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "pure_call_1m",
+      "revision": "base",
+      "trial": 4,
+      "median_ns": 38180000.0,
+      "mean_ns": 38210000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                     fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_pure_call_1m  37.99 ms      \u2502 38.94 ms      \u2502 38.18 ms      \u2502 38.21 ms      \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "array_build_sum_100k",
+      "revision": "head",
+      "trial": 3,
+      "median_ns": 36040000.0,
+      "mean_ns": 36060000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                             fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_array_build_sum_100k  35.71 ms      \u2502 36.5 ms       \u2502 36.04 ms      \u2502 36.06 ms      \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "call_chain_100x10k",
+      "revision": "head",
+      "trial": 0,
+      "median_ns": 18780000.0,
+      "mean_ns": 18790000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                           fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_call_chain_100x10k  18.62 ms      \u2502 19 ms         \u2502 18.78 ms      \u2502 18.79 ms      \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "closure_apply_1m",
+      "revision": "head",
+      "trial": 0,
+      "median_ns": 179200000.0,
+      "mean_ns": 179200000.0,
+      "samples": 12,
+      "iterations": 12,
+      "stdout": "runtime_benchmark                         fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_closure_apply_1m  177.9 ms      \u2502 180.4 ms      \u2502 179.2 ms      \u2502 179.2 ms      \u2502 12      \u2502 12\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "array_build_sum_100k",
+      "revision": "base",
+      "trial": 1,
+      "median_ns": 36050000.0,
+      "mean_ns": 36100000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                             fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_array_build_sum_100k  35.83 ms      \u2502 36.62 ms      \u2502 36.05 ms      \u2502 36.1 ms       \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "nested_loops_500x500",
+      "revision": "head",
+      "trial": 0,
+      "median_ns": 5900000.0,
+      "mean_ns": 5883000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                             fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_nested_loops_500x500  5.776 ms      \u2502 5.962 ms      \u2502 5.9 ms        \u2502 5.883 ms      \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "call_chain_100x10k",
+      "revision": "base",
+      "trial": 1,
+      "median_ns": 19030000.0,
+      "mean_ns": 19010000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                           fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_call_chain_100x10k  18.84 ms      \u2502 19.22 ms      \u2502 19.03 ms      \u2502 19.01 ms      \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "array_build_sum_100k",
+      "revision": "base",
+      "trial": 0,
+      "median_ns": 36300000.0,
+      "mean_ns": 36320000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                             fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_array_build_sum_100k  35.98 ms      \u2502 36.83 ms      \u2502 36.3 ms       \u2502 36.32 ms      \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "array_build_sum_100k",
+      "revision": "base",
+      "trial": 3,
+      "median_ns": 36060000.0,
+      "mean_ns": 36120000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                             fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_array_build_sum_100k  35.81 ms      \u2502 36.52 ms      \u2502 36.06 ms      \u2502 36.12 ms      \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "nested_loops_500x500",
+      "revision": "head",
+      "trial": 3,
+      "median_ns": 5864000.0,
+      "mean_ns": 5872000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                             fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_nested_loops_500x500  5.822 ms      \u2502 5.983 ms      \u2502 5.864 ms      \u2502 5.872 ms      \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "call_chain_100x10k",
+      "revision": "base",
+      "trial": 4,
+      "median_ns": 19000000.0,
+      "mean_ns": 18980000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                           fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_call_chain_100x10k  18.82 ms      \u2502 19.18 ms      \u2502 19 ms         \u2502 18.98 ms      \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "closure_apply_1m",
+      "revision": "head",
+      "trial": 3,
+      "median_ns": 175800000.0,
+      "mean_ns": 175800000.0,
+      "samples": 12,
+      "iterations": 12,
+      "stdout": "runtime_benchmark                         fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_closure_apply_1m  174.6 ms      \u2502 177.2 ms      \u2502 175.8 ms      \u2502 175.8 ms      \u2502 12      \u2502 12\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "call_chain_100x10k",
+      "revision": "base",
+      "trial": 3,
+      "median_ns": 18940000.0,
+      "mean_ns": 18930000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                           fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_call_chain_100x10k  18.77 ms      \u2502 19.15 ms      \u2502 18.94 ms      \u2502 18.93 ms      \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "pure_call_1m",
+      "revision": "base",
+      "trial": 0,
+      "median_ns": 38340000.0,
+      "mean_ns": 38490000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                     fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_pure_call_1m  37.98 ms      \u2502 40.74 ms      \u2502 38.34 ms      \u2502 38.49 ms      \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "nested_loops_500x500",
+      "revision": "head",
+      "trial": 1,
+      "median_ns": 5884000.0,
+      "mean_ns": 5875000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                             fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_nested_loops_500x500  5.786 ms      \u2502 5.97 ms       \u2502 5.884 ms      \u2502 5.875 ms      \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "nested_loops_500x500",
+      "revision": "base",
+      "trial": 0,
+      "median_ns": 6048000.0,
+      "mean_ns": 6046000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                             fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_nested_loops_500x500  5.974 ms      \u2502 6.16 ms       \u2502 6.048 ms      \u2502 6.046 ms      \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "nested_loops_500x500",
+      "revision": "base",
+      "trial": 3,
+      "median_ns": 6010000.0,
+      "mean_ns": 6002000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                             fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_nested_loops_500x500  5.887 ms      \u2502 6.113 ms      \u2502 6.01 ms       \u2502 6.002 ms      \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "pure_call_1m",
+      "revision": "head",
+      "trial": 3,
+      "median_ns": 37570000.0,
+      "mean_ns": 37580000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                     fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_pure_call_1m  37.43 ms      \u2502 37.73 ms      \u2502 37.57 ms      \u2502 37.58 ms      \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "pure_call_1m",
+      "revision": "base",
+      "trial": 3,
+      "median_ns": 38170000.0,
+      "mean_ns": 38160000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                     fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_pure_call_1m  37.99 ms      \u2502 38.38 ms      \u2502 38.17 ms      \u2502 38.16 ms      \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "pure_call_1m",
+      "revision": "base",
+      "trial": 1,
+      "median_ns": 38120000.0,
+      "mean_ns": 38140000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                     fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_pure_call_1m  37.82 ms      \u2502 38.43 ms      \u2502 38.12 ms      \u2502 38.14 ms      \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "closure_apply_1m",
+      "revision": "base",
+      "trial": 0,
+      "median_ns": 179100000.0,
+      "mean_ns": 179000000.0,
+      "samples": 12,
+      "iterations": 12,
+      "stdout": "runtime_benchmark                         fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_closure_apply_1m  177.8 ms      \u2502 180.2 ms      \u2502 179.1 ms      \u2502 179 ms        \u2502 12      \u2502 12\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "call_chain_100x10k",
+      "revision": "base",
+      "trial": 2,
+      "median_ns": 19060000.0,
+      "mean_ns": 19040000.0,
+      "samples": 16,
+      "iterations": 16,
+      "stdout": "runtime_benchmark                           fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_call_chain_100x10k  18.81 ms      \u2502 19.15 ms      \u2502 19.06 ms      \u2502 19.04 ms      \u2502 16      \u2502 16\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    },
+    {
+      "case": "closure_apply_1m",
+      "revision": "base",
+      "trial": 1,
+      "median_ns": 178900000.0,
+      "mean_ns": 179200000.0,
+      "samples": 12,
+      "iterations": 12,
+      "stdout": "runtime_benchmark                         fastest       \u2502 slowest       \u2502 median        \u2502 mean          \u2502 samples \u2502 iters\n\u2570\u2500 vm_speedtest_compute_closure_apply_1m  178 ms        \u2502 182 ms        \u2502 178.9 ms      \u2502 179.2 ms      \u2502 12      \u2502 12\n\n",
+      "stderr": "Timer precision: 16 ns\n"
+    }
+  ],
+  "summary": [
+    {
+      "case": "array_build_sum_100k",
+      "base_ns": 36060000.0,
+      "head_ns": 35960000.0,
+      "change_percent": -0.2773155851358844,
+      "trial_median_ranges_ns": {
+        "base": [
+          36050000.0,
+          36300000.0
+        ],
+        "head": [
+          35800000.0,
+          36100000.0
+        ]
+      }
+    },
+    {
+      "case": "call_chain_100x10k",
+      "base_ns": 19030000.0,
+      "head_ns": 18740000.0,
+      "change_percent": -1.5239096163951693,
+      "trial_median_ranges_ns": {
+        "base": [
+          18940000.0,
+          19070000.0
+        ],
+        "head": [
+          18690000.0,
+          18940000.0
+        ]
+      }
+    },
+    {
+      "case": "closure_apply_1m",
+      "base_ns": 179500000.0,
+      "head_ns": 176600000.0,
+      "change_percent": -1.6155988857938675,
+      "trial_median_ranges_ns": {
+        "base": [
+          178900000.0,
+          179800000.0
+        ],
+        "head": [
+          175400000.0,
+          179200000.0
+        ]
+      }
+    },
+    {
+      "case": "nested_loops_500x500",
+      "base_ns": 6010000.0,
+      "head_ns": 5864000.0,
+      "change_percent": -2.429284525790354,
+      "trial_median_ranges_ns": {
+        "base": [
+          5988000.0,
+          6048000.0
+        ],
+        "head": [
+          5830000.0,
+          5900000.0
+        ]
+      }
+    },
+    {
+      "case": "pure_call_1m",
+      "base_ns": 38180000.0,
+      "head_ns": 37300000.0,
+      "change_percent": -2.3048716605552633,
+      "trial_median_ranges_ns": {
+        "base": [
+          38120000.0,
+          38340000.0
+        ],
+        "head": [
+          37280000.0,
+          37830000.0
+        ]
+      }
+    }
+  ],
+  "base_commit": "2bfe3889c015785e001f09b26518463b2a5346d9",
+  "head_commit": "9824b278ce2282a32cd1a0f08f087cd479384d2a",
+  "completed_at_utc": "2026-10-07T14:48:25.003029+00:00",
+  "platform": "Linux aarch64",
+  "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: aarch64-unknown-linux-gnu\nrelease: 1.98.0\nLLVM version: 22.1.8\n",
+  "profile": {
+    "opt_level": 3,
+    "lto": "fat",
+    "codegen_units": 1,
+    "panic": "unwind"
+  },
+  "correctness": [
+    {
+      "revision": "base",
+      "name": "compute::array build sum 100k",
+      "expected": 4999950000,
+      "stdout": "4999950000",
+      "returncode": 0,
+      "stderr": "",
+      "source_sha256": "2bddc549383437df0ef26254928d73dae7be06a486b64f35bd49274b8b1174f2"
+    },
+    {
+      "revision": "base",
+      "name": "compute::call chain 100x10k",
+      "expected": 990000,
+      "stdout": "990000",
+      "returncode": 0,
+      "stderr": "",
+      "source_sha256": "6953b1b4d40131aabcbb4c919b300cadd983b4072db3e7dec4d2440a58e0aefb"
+    },
+    {
+      "revision": "base",
+      "name": "compute::closure apply 1m",
+      "expected": 999999000000,
+      "stdout": "999999000000",
+      "returncode": 0,
+      "stderr": "",
+      "source_sha256": "20c5a3786e5e052b0a00c61418c6267bcdd9fa6fede6f8b30b31e1b0cf8f9cc8"
+    },
+    {
+      "revision": "base",
+      "name": "compute::nested loops 500x500",
+      "expected": 15562562500,
+      "stdout": "15562562500",
+      "returncode": 0,
+      "stderr": "",
+      "source_sha256": "c774d5fe13edb8406b163a81d021212264016aca096b12fe3a9d18d76202a454"
+    },
+    {
+      "revision": "base",
+      "name": "compute::pure call 1m",
+      "expected": 499999500000,
+      "stdout": "499999500000",
+      "returncode": 0,
+      "stderr": "",
+      "source_sha256": "c1e4001319e0b866f8de59f7631b2f6a3d27e11161efa8af3732cef61e669651"
+    },
+    {
+      "revision": "head",
+      "name": "compute::array build sum 100k",
+      "expected": 4999950000,
+      "stdout": "4999950000",
+      "returncode": 0,
+      "stderr": "",
+      "source_sha256": "2bddc549383437df0ef26254928d73dae7be06a486b64f35bd49274b8b1174f2"
+    },
+    {
+      "revision": "head",
+      "name": "compute::call chain 100x10k",
+      "expected": 990000,
+      "stdout": "990000",
+      "returncode": 0,
+      "stderr": "",
+      "source_sha256": "6953b1b4d40131aabcbb4c919b300cadd983b4072db3e7dec4d2440a58e0aefb"
+    },
+    {
+      "revision": "head",
+      "name": "compute::closure apply 1m",
+      "expected": 999999000000,
+      "stdout": "999999000000",
+      "returncode": 0,
+      "stderr": "",
+      "source_sha256": "20c5a3786e5e052b0a00c61418c6267bcdd9fa6fede6f8b30b31e1b0cf8f9cc8"
+    },
+    {
+      "revision": "head",
+      "name": "compute::nested loops 500x500",
+      "expected": 15562562500,
+      "stdout": "15562562500",
+      "returncode": 0,
+      "stderr": "",
+      "source_sha256": "c774d5fe13edb8406b163a81d021212264016aca096b12fe3a9d18d76202a454"
+    },
+    {
+      "revision": "head",
+      "name": "compute::pure call 1m",
+      "expected": 499999500000,
+      "stdout": "499999500000",
+      "returncode": 0,
+      "stderr": "",
+      "source_sha256": "c1e4001319e0b866f8de59f7631b2f6a3d27e11161efa8af3732cef61e669651"
+    }
+  ],
+  "scope": "Bytecode-only warm BexEngine calls in the existing runtime_benchmark. Compilation/engine construction excluded; new context and call boundary included. Five shuffled process trials per workload/revision; OS timer; shared host. Later cleanup changes affect only native emission, tests and documentation."
+}

@@ -131,6 +131,22 @@ pub fn compile_program_with(
     opt: OptLevel,
     cache: &dyn PackageCache,
 ) -> Result<Program, CompileProgramError> {
+    Ok(compile_program_with_layout(db, root, opt, cache)?.program)
+}
+
+/// An executable beside the exact compiler-root identity of each linked
+/// package. Backends use this mapping; package display names may repeat.
+pub struct LinkedProgram {
+    pub program: Program,
+    pub package_roots: Vec<SourceRoot>,
+}
+
+pub fn compile_program_with_layout(
+    db: &dyn baml_compiler2_emit::Db,
+    root: SourceRoot,
+    opt: OptLevel,
+    cache: &dyn PackageCache,
+) -> Result<LinkedProgram, CompileProgramError> {
     // A dependency without files declares nothing itself. Served from its
     // interface (a mounted package), it is in the program through the output
     // the store holds for it — there is nothing to emit, and a store that
@@ -170,7 +186,10 @@ pub fn compile_program_with(
     let packages = program_order(db, root, packages);
     let mut program = link(&link_set(db, &packages, root))?;
     program.source_content_hash = Some(project_source_content_hash(db, root));
-    Ok(program)
+    Ok(LinkedProgram {
+        program,
+        package_roots: packages.iter().map(|package| package.root).collect(),
+    })
 }
 
 /// The program's package order — a function of the world graph alone, so

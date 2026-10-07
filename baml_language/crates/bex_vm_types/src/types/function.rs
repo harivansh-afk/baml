@@ -23,9 +23,11 @@ use crate::{Bytecode, HeapPtr, SysOp, TyTemplate, Value};
 /// native function names and casts the real function pointers to `*const ()`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FunctionKind {
-    /// Regular executable function.
+    /// A BAML function with a portable bytecode body.
     ///
-    /// The VM pushes a call frame onto the call stack and runs the bytecode.
+    /// The runtime pushes a BAML invocation frame. It executes an installed
+    /// compiled implementation when present, otherwise the portable body.
+    /// The variant name is retained for artifact compatibility.
     Bytecode,
 
     /// System operation (LLM calls, HTTP requests, file I/O, etc.).
@@ -123,6 +125,10 @@ impl FunctionOrigin {
 /// Represents any Baml function.
 #[derive(Clone, Debug, BorshSerialize, BorshDeserialize)]
 pub struct Function {
+    /// Optional process-local implementation of this BAML body. Its logical
+    /// function kind, signature, context and telemetry identity stay unchanged.
+    #[borsh(skip)]
+    pub compiled: Option<std::sync::Arc<crate::compiled::InstalledCode>>,
     /// Telemetry-only identity. None means unsupported in an executable object.
     /// Loaders assign IDs to supported compiler templates before execution;
     /// synthetic entry wrappers stay unsupported. Moving GC preserves identity.
@@ -519,7 +525,11 @@ impl Function {
             display_name,
             source_file,
             source_span,
-            kind: self.kind.into(),
+            kind: if self.compiled.is_some() {
+                btel_types::RuntimeFunctionKind::Compiled
+            } else {
+                self.kind.into()
+            },
             origin: self.origin.into(),
             owner_type,
             parent_function,
@@ -537,13 +547,17 @@ impl Function {
     /// functions without bytecode. Out-of-range values saturate, and the
     /// reader rejects them.
     pub fn telemetry_source_map(&self) -> Option<btel_types::SourceMap> {
+        if let Some(code) = &self.compiled {
+            return Some(code.source_map());
+        }
         if !matches!(self.kind, FunctionKind::Bytecode) {
             return None;
         }
         let compact = self.bytecode.compact.as_ref()?;
         let clamp = |value: usize| u32::try_from(value).unwrap_or(u32::MAX);
         Some(btel_types::SourceMap {
-            code_bytes: clamp(compact.code.len()),
+            coordinate: btel_types::SourceCoordinate::CompactByteOffset,
+            extent: clamp(compact.code.len()),
             entries: compact
                 .line_table
                 .iter()

@@ -43,6 +43,13 @@ use crate::{
     reporter::Reporter,
 };
 
+#[derive(Debug)]
+struct PackCompilation {
+    program: Program,
+    rust: Option<baml_db::rust::NativeModule>,
+    needs_format_hint: bool,
+}
+
 /// Package one or more BAML targets as a standalone executable.
 ///
 /// A positional target produces a single-entry executable. One or more
@@ -61,7 +68,10 @@ Examples:
     baml pack --function Extract --function Classify --output ./baml-tools
 
   Package a function from a standalone file:
-    baml pack --file script.baml main")]
+    baml pack --file script.baml main
+
+  Emit a Rust Cargo project with bytecode fallback:
+    baml pack main --emit-rust-project ./native-app --runtime-source /path/to/baml/baml_language")]
 pub struct PackArgs {
     #[command(flatten)]
     pub telemetry: crate::embed_telemetry::EmbedTelemetryArgs,
@@ -98,6 +108,21 @@ pub struct PackArgs {
     /// file stem, depending on the project mode.
     #[arg(short, long, help_heading = "Build options")]
     pub output: Option<PathBuf>,
+
+    /// Emit a Cargo project with compiled Rust bodies and bytecode fallback.
+    /// Build the resulting project with `cargo build --release`.
+    #[arg(long, value_name = "DIR", requires = "runtime_source", conflicts_with_all = ["output", "target_triple"], help_heading = "Build options")]
+    pub emit_rust_project: Option<PathBuf>,
+
+    /// Matching BAML runtime workspace (the directory containing Cargo.toml).
+    /// Required for Rust emission while runtime crates are not published.
+    #[arg(
+        long,
+        value_name = "DIR",
+        requires = "emit_rust_project",
+        help_heading = "Build options"
+    )]
+    pub runtime_source: Option<PathBuf>,
 
     /// Target triple for the packaged executable.
     ///
@@ -163,8 +188,11 @@ impl PackArgs {
             .telemetry
             .prepare(&mut telemetry, default_environment, "pack")?;
 
-        let (db, program, needs_format_hint) = self.load_and_compile(reporter)?;
-        let _ = db;
+        let PackCompilation {
+            program,
+            rust,
+            needs_format_hint,
+        } = self.load_and_compile(reporter)?;
         // Mirror `baml run`'s format advisory: if any source file
         // round-trips through `baml fmt` differently, surface a
         // non-fatal warning so users learn to keep packaged
@@ -203,8 +231,6 @@ impl PackArgs {
             output_format: self.output_format,
             telemetry,
         };
-        let target_triple = self.resolved_target_triple()?;
-        let host_bytes = read_host_binary(target_triple, reporter)?;
         if let Some(provisioning) = provisioning {
             reporter.spin("Provisioning", "embedded telemetry");
             envelope.telemetry.embedded =
@@ -214,6 +240,28 @@ impl PackArgs {
             baml_artifact::encode(baml_artifact::ArtifactKind::PackedProgram, &envelope)
                 .map_err(|e| anyhow!("failed to serialize pack envelope: {e}"))?;
 
+        if let Some(directory) = &self.emit_rust_project {
+            let module = rust.expect("Rust emission compiled with linked identities");
+            crate::rust_project::write(
+                directory,
+                self.runtime_source.as_deref().expect("validated flags"),
+                &serialized,
+                &module,
+            )?;
+            reporter.finish(
+                "Finished",
+                format!(
+                    "{} [Cargo project: {} compiled functions, {} bytecode fallbacks]",
+                    directory.display(),
+                    module.compiled.len(),
+                    module.fallback.len()
+                ),
+            );
+            return Ok(crate::ExitCode::Success);
+        }
+
+        let target_triple = self.resolved_target_triple()?;
+        let host_bytes = read_host_binary(target_triple, reporter)?;
         let basename = self.resolve_output_basename()?;
         let output_path = self
             .output
@@ -247,6 +295,16 @@ impl PackArgs {
 
     /// Validate flag combinations the clap-side `Args` derive can't catch.
     fn validate_flags(&self) -> Result<()> {
+        if self.emit_rust_project.is_some() != self.runtime_source.is_some() {
+            anyhow::bail!("--emit-rust-project and --runtime-source must be provided together");
+        }
+        if self.emit_rust_project.is_some()
+            && (self.output.is_some() || self.target_triple.is_some())
+        {
+            anyhow::bail!(
+                "Rust project emission cannot use --output or --target; select the target when building with Cargo"
+            );
+        }
         if self.expression.is_some() {
             anyhow::bail!(
                 "expression mode (`-e` / `--expression`) is not packageable; \
@@ -291,15 +349,18 @@ impl PackArgs {
         }
     }
 
-    fn load_and_compile(&self, reporter: &Reporter) -> Result<(ProjectDatabase, Program, bool)> {
+    fn load_and_compile(&self, reporter: &Reporter) -> Result<PackCompilation> {
         if let Some(file) = self.file.as_deref() {
             // Standalone `--file` mode has no project root, so there is no
             // cache seam — always a cold compile, same as `baml run --file`.
             let (db, package, needs_format_hint) = self.load_standalone(file)?;
             check_diagnostics(&db, "cannot pack: compilation errors found", reporter)?;
-            let program = crate::bytecode_cache::compile_program(&db, package, None)
-                .map_err(|e| anyhow!("compilation failed: {e:?}"))?;
-            return Ok((db, program, needs_format_hint));
+            let (program, rust) = self.compile(&db, package, None)?;
+            return Ok(PackCompilation {
+                program,
+                rust,
+                needs_format_hint,
+            });
         }
         self.load_and_compile_project(reporter)
     }
@@ -333,10 +394,7 @@ impl PackArgs {
     /// target-independent (the `--target` triple only selects the host binary
     /// bytes), and emit determinism guarantees a reused image is byte-identical
     /// to a fresh compile, so serving from cache never changes the artifact.
-    fn load_and_compile_project(
-        &self,
-        reporter: &Reporter,
-    ) -> Result<(ProjectDatabase, Program, bool)> {
+    fn load_and_compile_project(&self, reporter: &Reporter) -> Result<PackCompilation> {
         let mut session = crate::project_session::ProjectSession::open(
             self.from.as_deref(),
             crate::project_session::CacheUse::ReadWrite,
@@ -348,8 +406,14 @@ impl PackArgs {
         // the formatter and emit a single advisory if any file would change.
         let needs_format_hint = session.needs_format_hint();
 
-        if let Some(program) = session.try_cached_program() {
-            return Ok((session.db, program, needs_format_hint));
+        if self.emit_rust_project.is_none()
+            && let Some(program) = session.try_cached_program()
+        {
+            return Ok(PackCompilation {
+                program,
+                rust: None,
+                needs_format_hint,
+            });
         }
 
         // Seed the stdlib typed interface and install the served check rows —
@@ -382,8 +446,7 @@ impl PackArgs {
             None
         };
 
-        let program = crate::bytecode_cache::compile_program(db, package, cache.as_ref())
-            .map_err(|e| anyhow!("compilation failed: {e:?}"))?;
+        let (program, rust) = self.compile(db, package, cache.as_ref())?;
         if let Some(ctx) = cache {
             let fresh = fresh_diagnostics
                 .as_ref()
@@ -396,7 +459,36 @@ impl PackArgs {
                 stdlib_interface_hit,
             )?;
         }
-        Ok((session.db, program, needs_format_hint))
+        Ok(PackCompilation {
+            program,
+            rust,
+            needs_format_hint,
+        })
+    }
+
+    fn compile(
+        &self,
+        db: &ProjectDatabase,
+        package: baml_db::SourceRoot,
+        cache: Option<&crate::bytecode_cache::CacheContext>,
+    ) -> Result<(Program, Option<baml_db::rust::NativeModule>)> {
+        let linked = crate::bytecode_cache::compile_program_with_layout(db, package, cache)
+            .map_err(|e| anyhow!("compilation failed: {e:?}"))?;
+        let rust = if self.emit_rust_project.is_some() {
+            let functions: Vec<_> = db
+                .workspace_files()
+                .into_iter()
+                .flat_map(|file| {
+                    baml_db::baml_compiler2_hir::item_data::file_functions(db, file)
+                        .iter()
+                        .copied()
+                })
+                .collect();
+            Some(baml_db::rust::emit_module(db, &linked, &functions)?)
+        } else {
+            None
+        };
+        Ok((linked.program, rust))
     }
 
     fn load_standalone(
@@ -734,6 +826,8 @@ mod tests {
             functions: Vec::new(),
             file: None,
             output: None,
+            emit_rust_project: None,
+            runtime_source: None,
             target_triple: None,
             output_format: OutputFormat::Json,
             from: None,

@@ -73,7 +73,7 @@ impl<K> std::fmt::Debug for Index<K> {
 
 impl<K> Index<K> {
     /// Create an index from a raw usize value.
-    pub fn from_raw(raw: usize) -> Self {
+    pub const fn from_raw(raw: usize) -> Self {
         Self(raw, PhantomData)
     }
 

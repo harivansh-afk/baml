@@ -698,16 +698,34 @@ pub(crate) fn compile_program(
     package: SourceRoot,
     cache: Option<&CacheContext>,
 ) -> Result<Program, CompileProgramError> {
+    Ok(compile_program_with_layout(db, package, cache)?.program)
+}
+
+pub(crate) fn compile_program_with_layout(
+    db: &ProjectDatabase,
+    package: SourceRoot,
+    cache: Option<&CacheContext>,
+) -> Result<baml_db::program::LinkedProgram, CompileProgramError> {
     let Some(ctx) = cache else {
-        return baml_db::compile_program(db, package, CLI_OPT_LEVEL);
+        return baml_db::program::compile_program_with_layout(
+            db,
+            package,
+            CLI_OPT_LEVEL,
+            &baml_db::program::NoCache,
+        );
     };
-    match baml_db::compile_program_with(db, package, CLI_OPT_LEVEL, ctx) {
+    match baml_db::program::compile_program_with_layout(db, package, CLI_OPT_LEVEL, ctx) {
         Ok(program) => Ok(program),
         Err(CompileProgramError::Link(_)) => {
             // Every package is emitted afresh and stored under its own key,
             // so the entry that failed to bind is overwritten rather than
             // served — and refused — again on the next compile.
-            baml_db::compile_program_with(db, package, CLI_OPT_LEVEL, &StoreOnly(ctx))
+            baml_db::program::compile_program_with_layout(
+                db,
+                package,
+                CLI_OPT_LEVEL,
+                &StoreOnly(ctx),
+            )
         }
         Err(error) => Err(error),
     }
