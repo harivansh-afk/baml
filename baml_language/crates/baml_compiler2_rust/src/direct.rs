@@ -8,7 +8,7 @@ use baml_compiler2_hir::loc::DeclRef;
 use baml_compiler2_hir_ty::extern_loc::FunctionRef;
 use baml_compiler2_mir::Terminator;
 
-use crate::{Admitted, DirectSupport, NativeType, direct_callee, function::successors};
+use crate::{Admitted, DirectSupport, NativeType, direct_callee};
 
 const MAX_WORK: usize = 256;
 const MAX_DEPTH: usize = 16;
@@ -133,12 +133,15 @@ fn local_bound(function: &Admitted<'_>) -> Result<usize, &'static str> {
     let edges: Vec<_> = blocks
         .iter()
         .map(|block| {
-            successors(block.terminator.as_ref().expect("admitted terminator"))
-                .expect("admitted control flow")
+            block
+                .terminator
+                .as_ref()
+                .expect("admitted terminator")
+                .successors()
         })
         .collect();
     for block_edges in &edges {
-        for (target, _) in block_edges {
+        for target in block_edges {
             incoming[target.0] += 1;
         }
     }
@@ -150,7 +153,7 @@ fn local_bound(function: &Admitted<'_>) -> Result<usize, &'static str> {
     let mut visited = 0;
     while let Some(block) = queue.pop_front() {
         visited += 1;
-        for (target, _) in &edges[block] {
+        for target in &edges[block] {
             incoming[target.0] -= 1;
             if incoming[target.0] == 0 {
                 queue.push_back(target.0);

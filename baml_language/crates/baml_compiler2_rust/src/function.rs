@@ -2,7 +2,8 @@
 //! fields, call results enter through an explicit continuation, and source-site
 //! IDs remain independent of the state-machine block number.
 
-use crate::{NativeType, Rejection, direct_callee};
+use std::{collections::HashMap, fmt::Write as _};
+
 use baml_base::Span;
 use baml_compiler2_hir_ty::extern_loc::FunctionRef;
 use baml_compiler2_mir::{
@@ -10,7 +11,9 @@ use baml_compiler2_mir::{
     ShortCircuitKind, StatementKind, SwitchKey, Terminator, UnaryOp,
 };
 use baml_type::Int63;
-use std::{collections::HashMap, fmt::Write as _};
+use bex_vm_types::compiled::{CompiledSite, SiteKind};
+
+use crate::{NativeType, Rejection, direct_callee};
 
 type Result<T> = std::result::Result<T, Rejection>;
 
@@ -19,13 +22,24 @@ pub(crate) struct ResolvedCalls<'db> {
     pub(crate) slots: Vec<usize>,
 }
 
-pub(crate) fn emit<'db>(
-    id: usize,
+/// Facts shared by both entry shapes. This is an emission plan over the same
+/// checked MIR, not another lowered representation of the program.
+pub(crate) struct PreparedFunction {
+    blocks: Vec<Option<PreparedBlock>>,
+    sites: Vec<CompiledSite>,
+}
+
+struct PreparedBlock {
+    initialized: Vec<bool>,
+    statements: Vec<usize>,
+    terminator: usize,
+}
+
+pub(crate) fn prepare<'db>(
     candidate: &crate::Candidate<'db>,
     calls: &ResolvedCalls<'db>,
     source: &str,
-    direct: &HashMap<FunctionRef<'db>, crate::direct::Target>,
-) -> Result<String> {
+) -> Result<PreparedFunction> {
     let crate::Candidate {
         arity,
         body,
@@ -33,7 +47,6 @@ pub(crate) fn emit<'db>(
         span: fallback_span,
     } = candidate;
     let (arity, fallback_span) = (*arity, *fallback_span);
-    let (callees, slots) = (&calls.ids, &calls.slots);
     // Unsupported control flow is an admission decision. Structural failures
     // in the supported CFG are compiler errors and must not become fallback.
     for block in &body.blocks {
@@ -51,6 +64,80 @@ pub(crate) fn emit<'db>(
         }
     }
     let states = initialized_on_entry(body, arity).map_err(Rejection::invalid)?;
+    let line_starts: Vec<u32> = std::iter::once(0)
+        .chain(
+            source
+                .bytes()
+                .enumerate()
+                .filter(|(_, byte)| *byte == b'\n')
+                .map(|(index, _)| u32::try_from(index + 1).expect("source offsets fit TextSize")),
+        )
+        .collect();
+    let mut sites = Vec::new();
+    // Entry includes failure before the first operation and a GC handoff just
+    // after the caller pushed this frame. Both entry shapes use this same map.
+    site(&mut sites, fallback_span, source, &line_starts, false)?;
+    let direct = HashMap::new();
+    let mut validator = Emitter {
+        types,
+        callees: &calls.ids,
+        initialized: Vec::new(),
+        direct: &direct,
+        resumable: true,
+    };
+    let mut blocks = Vec::with_capacity(body.blocks.len());
+    for (block, state) in body.blocks.iter().zip(states) {
+        let Some(initialized) = state else {
+            blocks.push(None);
+            continue;
+        };
+        validator.initialized.clone_from(&initialized);
+        let mut statements = Vec::with_capacity(block.statements.len());
+        for statement in &block.statements {
+            statements.push(site(
+                &mut sites,
+                statement.span.or(block.span).or(fallback_span),
+                source,
+                &line_starts,
+                false,
+            )?);
+            // Reuse the operation emitter's type/admission rules. Only the
+            // small operation fragment is discarded, not an entire Rust body.
+            validator.statement(&statement.kind)?;
+        }
+        let term = block
+            .terminator
+            .as_ref()
+            .expect("analysis verified terminators");
+        let terminator = site(
+            &mut sites,
+            block.terminator_span.or(block.span).or(fallback_span),
+            source,
+            &line_starts,
+            matches!(term, Terminator::Call { .. }),
+        )?;
+        validator.terminator(term, block.id)?;
+        blocks.push(Some(PreparedBlock {
+            initialized,
+            statements,
+            terminator,
+        }));
+    }
+    Ok(PreparedFunction { blocks, sites })
+}
+
+pub(crate) fn emit<'db>(
+    id: usize,
+    candidate: &crate::Candidate<'db>,
+    calls: &ResolvedCalls<'db>,
+    prepared: &PreparedFunction,
+    direct: &HashMap<FunctionRef<'db>, crate::direct::Target>,
+) -> Result<String> {
+    let crate::Candidate {
+        arity, body, types, ..
+    } = candidate;
+    let arity = *arity;
+    let (callees, slots) = (&calls.ids, &calls.slots);
     let mut emitter = Emitter {
         types,
         callees,
@@ -88,8 +175,8 @@ pub(crate) fn emit<'db>(
         "impl CompiledFrame for Frame{id} {{\n    fn site(&self) -> usize {{ self.site }}\n    fn resume(&mut self, input: ResumeInput, poll: &mut EarlyYieldCheck, runtime: &mut dyn CompiledRuntime) -> Result<CompiledAction, VmRustFnError> {{"
     );
     out.push_str("        match (self.waiting.take(), input) {\n            (None, ResumeInput::Continue) => {},\n            (Some(call), ResumeInput::Returned(_value)) => match call {\n");
-    for (block, state) in body.blocks.iter().zip(&states) {
-        if state.is_none() {
+    for (block, plan) in body.blocks.iter().zip(&prepared.blocks) {
+        if plan.is_none() {
             continue;
         }
         if let Some(Terminator::Call {
@@ -110,33 +197,13 @@ pub(crate) fn emit<'db>(
         }
     }
     out.push_str("                _ => return Err(VmInternalError::InvalidCompiledCode { message: \"unknown compiled continuation\".into() }.into()),\n            },\n            _ => return Err(VmInternalError::InvalidCompiledCode { message: \"unexpected compiled resume input\".into() }.into()),\n        }\n        loop {\n            if poll.tick() && runtime.poll_for_yield(poll) { return Ok(CompiledAction::Yield); }\n            match self.block {\n");
-    let line_starts: Vec<u32> = std::iter::once(0)
-        .chain(
-            source
-                .bytes()
-                .enumerate()
-                .filter(|(_, byte)| *byte == b'\n')
-                .map(|(index, _)| u32::try_from(index + 1).expect("source offsets fit TextSize")),
-        )
-        .collect();
-    let mut sites = Vec::new();
-    // Site zero describes entry, including failures before the first body
-    // operation and a GC handoff immediately after a call pushed this frame.
-    site(&mut sites, fallback_span, source, &line_starts, false)?;
-    for (block, state) in body.blocks.iter().zip(states) {
-        let Some(state) = state else {
+    for (block, plan) in body.blocks.iter().zip(&prepared.blocks) {
+        let Some(plan) = plan else {
             continue;
         };
-        emitter.initialized = state;
+        emitter.initialized.clone_from(&plan.initialized);
         let _ = writeln!(out, "                {} => {{", block.id.0);
-        for statement in &block.statements {
-            let site = site(
-                &mut sites,
-                statement.span.or(block.span).or(fallback_span),
-                source,
-                &line_starts,
-                false,
-            )?;
+        for (statement, site) in block.statements.iter().zip(&plan.statements) {
             let _ = writeln!(out, "                    self.site = {site};");
             if let Some(line) = emitter.statement(&statement.kind)? {
                 let _ = writeln!(out, "                    {line}");
@@ -146,13 +213,7 @@ pub(crate) fn emit<'db>(
             .terminator
             .as_ref()
             .expect("analysis verified terminators");
-        let site = site(
-            &mut sites,
-            block.terminator_span.or(block.span).or(fallback_span),
-            source,
-            &line_starts,
-            matches!(term, Terminator::Call { .. }),
-        )?;
+        let site = plan.terminator;
         let _ = writeln!(out, "                    self.site = {site};");
         for line in emitter.terminator(term, block.id)? {
             let _ = writeln!(out, "                    {line}");
@@ -178,8 +239,18 @@ pub(crate) fn emit<'db>(
         out,
         "static CODE_{id}: CompiledCode = CompiledCode {{ create: create_{id}, calls: &{slots:?}, sites: &["
     );
-    for entry in sites {
-        let _ = writeln!(out, "    {entry},");
+    for entry in &prepared.sites {
+        let CompiledSite {
+            file_id,
+            start,
+            end,
+            line,
+            kind,
+        } = entry;
+        let _ = writeln!(
+            out,
+            "    CompiledSite {{ file_id: {file_id}, start: {start}, end: {end}, line: {line}, kind: SiteKind::{kind:?} }},"
+        );
     }
     out.push_str("] };\n");
     Ok(out)
@@ -191,6 +262,7 @@ pub(crate) fn emit_direct<'db>(
     target: &crate::direct::Target,
     candidate: &crate::Candidate<'db>,
     calls: &ResolvedCalls<'db>,
+    prepared: &PreparedFunction,
     direct: &HashMap<FunctionRef<'db>, crate::direct::Target>,
 ) -> Result<String> {
     let id = target.object;
@@ -233,26 +305,19 @@ pub(crate) fn emit_direct<'db>(
         candidate.body.entry.0,
         result_ty.rust()
     );
-    let states =
-        initialized_on_entry(candidate.body, candidate.arity).map_err(Rejection::invalid)?;
-    // CODE_id uses this same reachable-block/statement/terminator order. Site
-    // zero is entry; direct execution must use the same source coordinates.
-    let mut next_site = 1;
-    for (block, state) in candidate.body.blocks.iter().zip(states) {
-        let Some(state) = state else {
+    for (block, plan) in candidate.body.blocks.iter().zip(&prepared.blocks) {
+        let Some(plan) = plan else {
             continue;
         };
-        emitter.initialized = state;
+        emitter.initialized.clone_from(&plan.initialized);
         let _ = writeln!(out, "            {} => {{", block.id.0);
-        for statement in &block.statements {
-            let _ = writeln!(out, "                site = {next_site};");
-            next_site += 1;
+        for (statement, site) in block.statements.iter().zip(&plan.statements) {
+            let _ = writeln!(out, "                site = {site};");
             if let Some(line) = emitter.statement(&statement.kind)? {
                 let _ = writeln!(out, "                {line}");
             }
         }
-        let _ = writeln!(out, "                site = {next_site};");
-        next_site += 1;
+        let _ = writeln!(out, "                site = {};", plan.terminator);
         for line in emitter.terminator(
             block.terminator.as_ref().expect("admitted terminator"),
             block.id,
@@ -275,7 +340,7 @@ pub(crate) fn emit_direct<'db>(
 }
 
 fn site(
-    sites: &mut Vec<String>,
+    sites: &mut Vec<CompiledSite>,
     span: Option<Span>,
     source: &str,
     line_starts: &[u32],
@@ -291,9 +356,19 @@ fn site(
         return Err(Rejection::invalid("source span ends outside its file"));
     }
     let line = span.start_line(line_starts);
-    let kind = if call { "Call" } else { "Operation" };
+    let kind = if call {
+        SiteKind::Call
+    } else {
+        SiteKind::Operation
+    };
     let id = sites.len();
-    sites.push(format!("CompiledSite {{ file_id: {}, start: {start}, end: {end}, line: {line}, kind: SiteKind::{kind} }}", span.file_id.as_u32()));
+    sites.push(CompiledSite {
+        file_id: span.file_id.as_u32(),
+        start: span.range.start().into(),
+        end: span.range.end().into(),
+        line: u32::try_from(line).expect("source lines fit TextSize"),
+        kind,
+    });
     Ok(id)
 }
 
@@ -531,7 +606,8 @@ impl<'db> Emitter<'_, 'db> {
                 let (left, ty) = self.operand(left)?;
                 let right = self.operand_of(right, ty)?;
                 let checked = |name| Ok((format!("int::{name}({left}, {right})?"), Int));
-                let infix = |result| Ok((format!("{left} {op} {right}"), result));
+                // MIR Display is diagnostic syntax, not a Rust token contract.
+                let infix = |token: &str, result| Ok((format!("{left} {token} {right}"), result));
                 match (op, ty) {
                     (BinOp::Add, Int) => checked("add"),
                     (BinOp::Sub, Int) => checked("sub"),
@@ -548,9 +624,15 @@ impl<'db> Emitter<'_, 'db> {
                         };
                         Ok((format!("({left}).{method}({right})"), Int))
                     }
-                    (BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor, Bool) => infix(Bool),
-                    (BinOp::Eq | BinOp::Ne, Int | Bool) => infix(Bool),
-                    (BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge, Int) => infix(Bool),
+                    (BinOp::BitAnd, Bool) => infix("&", Bool),
+                    (BinOp::BitOr, Bool) => infix("|", Bool),
+                    (BinOp::BitXor, Bool) => infix("^", Bool),
+                    (BinOp::Eq, Int | Bool) => infix("==", Bool),
+                    (BinOp::Ne, Int | Bool) => infix("!=", Bool),
+                    (BinOp::Lt, Int) => infix("<", Bool),
+                    (BinOp::Le, Int) => infix("<=", Bool),
+                    (BinOp::Gt, Int) => infix(">", Bool),
+                    (BinOp::Ge, Int) => infix(">=", Bool),
                     _ => Err(Rejection::unsupported(format!("{op:?} on {ty:?}"))),
                 }
             }
@@ -642,6 +724,11 @@ fn local_place(place: &Place) -> Result<Local> {
 
 /// Which locals are assigned on every path into each block, or `None` for a
 /// block no path reaches. Parameters are assigned on entry.
+///
+/// MIR's verifier runs only in debug builds. Native emission needs this check
+/// in release as well: zero-initialized Rust storage must never conceal an
+/// uninitialized BAML read. This subset excludes cells and handlers; its edge
+/// writes must stay consistent with MIR's definite-assignment verifier.
 fn initialized_on_entry(
     body: &MirFunctionBody<'_>,
     arity: usize,
@@ -716,7 +803,7 @@ fn initialized_on_entry(
 
 /// Each successor of a supported terminator, with the local it assigns on the
 /// way there.
-pub(crate) fn successors(
+fn successors(
     terminator: &Terminator<'_>,
 ) -> std::result::Result<Vec<(BlockId, Option<Local>)>, String> {
     Ok(match terminator {
@@ -766,8 +853,9 @@ pub(crate) fn successors(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use baml_compiler2_mir::{BasicBlock, LocalDecl, RuntimeTy, Statement};
+
+    use super::*;
 
     #[test]
     fn short_circuit_assignment_exists_only_on_the_short_edge() {

@@ -93,6 +93,7 @@ struct Admitted<'db> {
     global: usize,
     candidate: Candidate<'db>,
     calls: function::ResolvedCalls<'db>,
+    prepared: function::PreparedFunction,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -227,17 +228,11 @@ pub fn emit_module<'db>(
             let calls = function::ResolvedCalls { ids: calls, slots };
             // Establish normal admission before call-graph specialization. A
             // callee rejected by emission must never gain a direct entry point.
-            function::emit(
-                object,
-                &candidate,
-                &calls,
-                loc.file(db).text(db),
-                &HashMap::new(),
-            )?;
-            Ok((object, global, candidate, calls))
+            let prepared = function::prepare(&candidate, &calls, loc.file(db).text(db))?;
+            Ok((object, global, candidate, calls, prepared))
         })();
         match result {
-            Ok((object, global, candidate, calls)) => {
+            Ok((object, global, candidate, calls, prepared)) => {
                 compiled.push(object);
                 admitted.push(Admitted {
                     loc,
@@ -246,6 +241,7 @@ pub fn emit_module<'db>(
                     global,
                     candidate,
                     calls,
+                    prepared,
                 });
             }
             Err(Rejection::Unsupported(reason)) => fallback.push(Unsupported {
@@ -273,15 +269,21 @@ pub fn emit_module<'db>(
                 function.object,
                 &function.candidate,
                 &function.calls,
-                function.loc.file(db).text(db),
+                &function.prepared,
                 &targets,
             )
             .map_err(emit_error)?,
         );
         if let Some(target) = targets.get(&DeclRef::Source(function.loc)) {
             source.push_str(
-                &function::emit_direct(target, &function.candidate, &function.calls, &targets)
-                    .map_err(emit_error)?,
+                &function::emit_direct(
+                    target,
+                    &function.candidate,
+                    &function.calls,
+                    &function.prepared,
+                    &targets,
+                )
+                .map_err(emit_error)?,
             );
         }
     }
