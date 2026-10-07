@@ -10,6 +10,7 @@
 //!
 //! The instructions that the VM runs are defined in [`Instruction`] enum.
 
+pub mod array_index;
 pub mod bytecode;
 pub mod cancellation;
 pub mod compiled;

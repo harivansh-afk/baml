@@ -683,6 +683,7 @@ fn vm_outcome(result: Result<BexExternalValue, bex_engine::EngineError>) -> Stri
 }
 
 fn build_and_run(test: &str, main: &str, program: &[u8]) -> String {
+    let release = std::env::var("BAML_NATIVE_TEST_RELEASE").as_deref() == Ok("1");
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .canonicalize()
@@ -721,6 +722,9 @@ fn build_and_run(test: &str, main: &str, program: &[u8]) -> String {
     }
     manifest.push_str("tempfile = \"3\"\n");
     manifest.push_str("borsh = \"1\"\ntokio = { version = \"1\", features = [\"macros\", \"rt-multi-thread\"] }\n");
+    if release {
+        manifest.push_str("[profile.release]\nopt-level = 3\nlto = \"fat\"\ncodegen-units = 1\n");
+    }
     std::fs::write(project.path().join("Cargo.toml"), manifest).unwrap();
     std::fs::copy(
         workspace.join("Cargo.lock"),
@@ -728,19 +732,23 @@ fn build_and_run(test: &str, main: &str, program: &[u8]) -> String {
     )
     .unwrap();
     let target = workspace.join("target");
-    let build = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
+    let mut build = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
+    build
         .args(["build", "--offline", "--quiet", "--manifest-path"])
         .arg(project.path().join("Cargo.toml"))
         .arg("--target-dir")
-        .arg(&target)
-        .output()
-        .unwrap();
+        .arg(&target);
+    if release {
+        build.arg("--release");
+    }
+    let build = build.output().unwrap();
     assert!(
         build.status.success(),
         "generated Rust did not build:\n{}\n{main}",
         String::from_utf8_lossy(&build.stderr)
     );
-    let run = Command::new(target.join("debug").join(format!(
+    let profile = if release { "release" } else { "debug" };
+    let run = Command::new(target.join(profile).join(format!(
         "rust_backend_{test}{}",
         std::env::consts::EXE_SUFFIX
     )))

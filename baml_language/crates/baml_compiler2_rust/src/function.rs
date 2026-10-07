@@ -182,7 +182,7 @@ pub(crate) fn emit<'db>(
     out.push_str("    }\n}\n");
     let _ = writeln!(
         out,
-        "impl CompiledFrame for Frame{id} {{\n    fn site(&self) -> SiteId {{ self.site }}\n    fn resume(&mut self, input: ResumeInput, poll: &mut EarlyYieldCheck, runtime: &mut dyn CompiledRuntime) -> Result<CompiledAction, VmRustFnError> {{"
+        "impl CompiledFrame for Frame{id} {{\n    fn site(&self) -> SiteId {{ self.site }}\n    #[allow(unsafe_code, reason = \"heap operands are rooted state under the resume permit\")]\n    fn resume(&mut self, input: ResumeInput, poll: &mut EarlyYieldCheck, permit: PermitProof<'_>, runtime: &mut dyn CompiledRuntime) -> Result<CompiledAction, VmRustFnError> {{"
     );
     out.push_str("        match (self.waiting.take(), input) {\n            (None, ResumeInput::Continue) => {},\n            (Some(call), ResumeInput::Returned(_value)) => match call {\n");
     for (block, plan) in body.blocks.iter().zip(&prepared.blocks) {
@@ -447,7 +447,7 @@ impl<'db> Emitter<'_, 'db> {
                         let index = self.place_of(&Place::Local(*index), NativeType::Int)?;
                         // MIR evaluates the RHS before storing into its destination.
                         Ok(Some(format!(
-                            "let value = {expr}; runtime.int_array_set({array}, {index}, value)?;"
+                            "let value = {expr}; unsafe {{ compiled::int_array_set({array}, {index}, value, permit) }}?;"
                         )))
                     }
                     _ => Err(Rejection::unsupported(format!("place {destination}"))),
@@ -616,7 +616,10 @@ impl<'db> Emitter<'_, 'db> {
             }
             Rvalue::Len(place) => {
                 let array = self.place_of(place, IntArray)?;
-                Ok((format!("runtime.int_array_len({array})?"), Int))
+                Ok((
+                    format!("unsafe {{ compiled::int_array_len({array}, permit) }}?"),
+                    Int,
+                ))
             }
             Rvalue::UnaryOp { op, operand } => {
                 let (value, ty) = self.operand(operand)?;
@@ -691,7 +694,7 @@ impl<'db> Emitter<'_, 'db> {
                 let array = self.place_of(base, NativeType::IntArray)?;
                 let index = self.place_of(&Place::Local(*index), NativeType::Int)?;
                 Ok((
-                    format!("runtime.int_array_get({array}, {index})?"),
+                    format!("unsafe {{ compiled::int_array_get({array}, {index}, permit) }}?"),
                     NativeType::Int,
                 ))
             }

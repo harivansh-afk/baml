@@ -1,7 +1,7 @@
 //! Execution of compiled bodies through the ordinary BAML invocation lifecycle.
 
 use bex_vm_types::{
-    GlobalIndex, Object, RealizedTy, StackIndex, Value,
+    GlobalIndex, Object, PermitProof, RealizedTy, StackIndex, Value,
     compiled::{
         CompiledAction, CompiledCode, CompiledFrame, CompiledHeap, CompiledRuntime, ResumeInput,
         SiteId,
@@ -224,32 +224,13 @@ impl CompiledRuntime for BexVm {
     }
 }
 
-impl BexVm {
-    #[allow(
-        clippy::unused_self,
-        reason = "the borrow ties the returned array to the active heap context"
-    )]
-    fn compiled_array(&self, value: Value) -> Result<&bex_vm_types::types::Array, VmInternalError> {
-        let invalid = || VmInternalError::InvalidCompiledCode {
-            message: "expected int[] in compiled code".into(),
-        };
-        let pointer = value.as_object_ptr().ok_or_else(invalid)?;
-        // SAFETY: compiled values are rooted by the active frame/argument stack.
-        // This context cannot outlive the VM's active permit, and array contents
-        // are accessed only under their existing container lock.
-        #[allow(unsafe_code, reason = "heap access under the active VM permit")]
-        let object = unsafe { pointer.get() };
-        match object {
-            Object::Array(array) if *array.element_ty == RealizedTy::Int => Ok(array),
-            _ => Err(invalid()),
-        }
-    }
-}
-
 impl CompiledHeap for BexVm {
     fn check_int_array(&self, value: Value) -> Result<Value, VmInternalError> {
-        self.compiled_array(value)?;
-        Ok(value)
+        // SAFETY: arguments and restored call results are live under our permit.
+        #[allow(unsafe_code, reason = "the VM roots compiled call-boundary values")]
+        unsafe {
+            bex_vm_types::compiled::check_int_array(value, self.proof())
+        }
     }
 
     fn alloc_int_array(
@@ -277,52 +258,6 @@ impl CompiledHeap for BexVm {
             poll.poll_soon();
         }
         value
-    }
-
-    fn int_array_len(&self, array: Value) -> Result<Int63, VmRustFnError> {
-        let length = self.compiled_array(array)?.len();
-        i64::try_from(length)
-            .ok()
-            .and_then(Int63::new)
-            .ok_or_else(|| {
-                VmInternalError::InvalidCompiledCode {
-                    message: "array length exceeds int range".into(),
-                }
-                .into()
-            })
-    }
-
-    fn int_array_get(&self, array: Value, index: Int63) -> Result<Int63, VmRustFnError> {
-        let guard = self.compiled_array(array)?.lock();
-        let index = crate::array_index::resolve_index(index.get(), guard.len()).ok_or(
-            VmPanic::IndexOutOfBounds {
-                index: index.get(),
-                length: guard.len(),
-            },
-        )?;
-        Ok(bex_vm_types::compiled::read_int(guard[index])?)
-    }
-
-    fn int_array_set(
-        &mut self,
-        array: Value,
-        index: Int63,
-        value: Int63,
-    ) -> Result<(), VmRustFnError> {
-        let mut guard = self.compiled_array(array)?.lock_mut(self.tlab.alloc_debt());
-        let index = crate::array_index::resolve_index(index.get(), guard.len()).ok_or(
-            VmPanic::IndexOutOfBounds {
-                index: index.get(),
-                length: guard.len(),
-            },
-        )?;
-        let value = Value::int(value.get());
-        // This is a no-op for integers, but keeps the existing mutation contract
-        // explicit: writes of object references must notify the collector.
-        self.heap
-            .write_barrier(array.as_object_ptr().expect("validated array"), value);
-        guard[index] = value;
-        Ok(())
     }
 }
 
@@ -392,7 +327,17 @@ impl BexVm {
         // loop edge; keep the generated should_early_yield check inlinable.
         self.settle();
         let mut poll = self.early_yield.clone();
-        let result = active.resume(input, &mut poll, self);
+        // SAFETY: this whole interval holds the VM's active heap permit, and
+        // none of the CompiledRuntime hooks can release it. A separate proof
+        // avoids borrowing `self` immutably while the control hooks borrow it
+        // mutably. The callee cannot retain the lifetime-generic proof in its
+        // saved state; all state is restored before the engine can park.
+        #[allow(
+            unsafe_code,
+            reason = "compiled execution stays under the active VM permit"
+        )]
+        let permit = unsafe { PermitProof::new() };
+        let result = active.resume(input, &mut poll, permit, self);
         self.early_yield = poll;
         self.settle();
         let site = active.site().raw();

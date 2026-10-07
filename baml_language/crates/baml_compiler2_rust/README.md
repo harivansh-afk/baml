@@ -61,7 +61,7 @@ On error, direct activations leave their logical frames and deepest source site 
 
 During `resume`, the owning boxed state is temporarily held outside the frame vector so hooks can grow that vector safely. The heap permit stays active throughout; state is restored before any GC handoff or error materialization. Direct regions contain only scalars. The yield checker is cloned once per resume and its exact counter restored afterward, keeping loop checks statically callable while avoiding overlapping mutable borrows of the VM. This adds flag-reference refcount work per resume and must be included in measurements.
 
-Both entry shapes reuse the same MIR operation emitter. Admission is established before call-graph specialization, so a rejected callee cannot accidentally get a direct entry point. The bounded helper and resumable entry currently duplicate generated body code; measure binary/build size as well as execution time. Runtime hooks, global/descriptor checks, logical metadata and telemetry costs remain. This branch establishes an experiment, not a speedup claim.
+Both entry shapes reuse the same MIR operation emitter. Admission is established before call-graph specialization, so a rejected callee cannot accidentally get a direct entry point. The bounded helper and resumable entry currently duplicate generated body code; measure binary/build size as well as execution time. Runtime hooks, global/descriptor checks, logical metadata and telemetry costs remain. Benefits remain workload-dependent; the validation reports identify the measured revisions and scopes.
 
 Admission prepares block-entry assignment facts and a source-site table once.
 Resumable and direct emission consume those exact site IDs; they do not rebuild
@@ -73,14 +73,16 @@ tokens rather than using MIR's diagnostic formatting.
 
 Arguments remain rooted on the eval stack until a compiled body takes ownership. `RootHaver` exposes and forwards array references owned by suspended compiled state. Array locals hold BEX references, so copying or passing an array preserves its identity without copying its contents. Allocating an array creates a new object through the VM's existing TLAB.
 
-`CompiledHeap` exposes checked integer-array operations during one active heap permit. Array accesses use the existing container locks, index rules and mutation barrier. Helpers return values, never borrowed heap storage or guards; nothing borrowed survives a call or yield. Roots are currently conservative: an array local stays rooted until overwritten or its activation ends. Precise last-use clearing is future optimization work; MIR `Drop` evaluates and discards a value and does not end the source local's lifetime.
+`CompiledHeap` retains call-boundary validation and allocation. Generated integer-array reads, writes and length checks call shared `bex_vm_types::compiled` functions directly. They receive the existing `PermitProof` for one resume interval, so LLVM can see their bodies without a virtual runtime call per element. The unsafe helper contract also requires current, live operands; generated state supplies those roots. Helpers return values, never borrowed heap storage or guards.
+
+Array accesses keep the existing container lock and shared negative-index rules. Fixed integer stores use locked slice access that cannot change the backing allocation's length or capacity, so they produce no payload debt and need no reference write barrier. Resizing still uses allocation-metered guards; heap-valued stores still require barriers. Nothing borrowed survives a call or yield. Roots are currently conservative: an array local stays rooted until overwritten or its activation ends. Precise last-use clearing is future optimization work; MIR `Drop` evaluates and discards a value and does not end the source local's lifetime.
 
 Loops cooperate through the existing yield checker. GC waits for permits to be released. Cancellation remains a language checkpoint at sys-op/await boundaries, with shielding inherited through compiled calls from interpreted cleanup. A GC yield does not introduce a new cancellation point.
 
 The inlined checkpoint decrements the loaned checker; only a due checkpoint
 calls the runtime to settle TLAB payload debt before polling pressure. Array
 allocation notifies that same checker when spending crosses the GC budget, and
-array writes use the current allocation-metered guard. Installed compiled
+fixed integer writes retain the container lock without exposing resize operations. Installed compiled
 bindings participate in the heap footprint census. GC root spans measure the
 collection pause, not the mutator's park wait; keep those measurements separate.
 
@@ -128,6 +130,9 @@ Both host paths verify the current artifact telemetry policy before runtime setu
 
 [Foundation validation](validation/README.md) records the current-base bytecode
 comparison, raw trials, correctness checks and the remaining acceptance boundaries.
+[Array-access validation](validation/array-access.md) records the statically
+callable heap operations, release inlining evidence, matched execution costs
+and the remaining synchronization cost.
 
 The differential suite builds generated Rust and runs it through the real engine. It checks arithmetic boundaries, evaluation order, control flow, recursion, fallback, errors and actual compiled execution. Every case must enter its generated frame unless the test explicitly requires bytecode fallback. Helpers can additionally require direct or resumable execution by object identity. Test instrumentation edits parsed Rust syntax and records both entry shapes; it does not depend on an emitted signature's whitespace. A regression test proves one native function cannot mask another case's fallback.
 

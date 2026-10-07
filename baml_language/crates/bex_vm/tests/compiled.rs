@@ -16,7 +16,8 @@ use bex_vm::{
     package_baml::{Continuation, NativeCallResult},
 };
 use bex_vm_types::{
-    EarlyYieldCheck, FunctionKind, HeapPtr, Object, ObjectIndex, Program, RootHaver, Value,
+    EarlyYieldCheck, FunctionKind, HeapPtr, Object, ObjectIndex, PermitProof, Program, RootHaver,
+    Value,
     compiled::*,
     errors::{VmInternalError, VmPanic, VmRustFnError},
 };
@@ -75,6 +76,7 @@ impl CompiledFrame for Sum {
         &mut self,
         input: ResumeInput,
         poll: &mut EarlyYieldCheck,
+        _: PermitProof<'_>,
         _: &mut dyn CompiledRuntime,
     ) -> Result<CompiledAction, VmRustFnError> {
         assert!(matches!(input, ResumeInput::Continue));
@@ -199,6 +201,7 @@ impl CompiledFrame for Hold {
         &mut self,
         _: ResumeInput,
         _: &mut EarlyYieldCheck,
+        _: PermitProof<'_>,
         _: &mut dyn CompiledRuntime,
     ) -> Result<CompiledAction, VmRustFnError> {
         if !std::mem::replace(&mut self.parked, true) {
@@ -292,6 +295,7 @@ impl CompiledFrame for Seven {
         &mut self,
         _: ResumeInput,
         _: &mut EarlyYieldCheck,
+        _: PermitProof<'_>,
         _: &mut dyn CompiledRuntime,
     ) -> Result<CompiledAction, VmRustFnError> {
         Ok(CompiledAction::Return(Value::int(7)))
