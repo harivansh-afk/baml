@@ -72,7 +72,11 @@ pub unsafe fn int_array_len(value: Value, permit: PermitProof<'_>) -> Result<Int
 ///
 /// # Safety
 /// `value` must be current and live in the heap protected by `permit`.
-#[inline]
+#[inline(always)]
+#[allow(
+    clippy::inline_always,
+    reason = "expose each hot array operation to the generated loop optimizer"
+)]
 #[allow(
     unsafe_code,
     reason = "generated callers root values under the supplied permit"
@@ -96,7 +100,11 @@ pub unsafe fn int_array_get(
 ///
 /// # Safety
 /// `array_value` must be current and live in the heap protected by `permit`.
-#[inline]
+#[inline(always)]
+#[allow(
+    clippy::inline_always,
+    reason = "expose each hot array operation to the generated loop optimizer"
+)]
 #[allow(
     unsafe_code,
     reason = "generated callers root values under the supplied permit"
