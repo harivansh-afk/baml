@@ -61,7 +61,7 @@ On error, direct activations leave their logical frames and deepest source site 
 
 During `resume`, the owning boxed state is temporarily held outside the frame vector so hooks can grow that vector safely. The heap permit stays active throughout; state is restored before any GC handoff or error materialization. Direct regions contain only scalars. The yield checker is cloned once per resume and its exact counter restored afterward, keeping loop checks statically callable while avoiding overlapping mutable borrows of the VM. This adds flag-reference refcount work per resume and must be included in measurements.
 
-Both entry shapes reuse the same MIR operation emitter. Admission is established before call-graph specialization, so a rejected callee cannot accidentally get a direct entry point. The bounded helper and resumable entry currently duplicate generated body code; measure binary/build size as well as execution time. Runtime hooks, global/descriptor checks, logical metadata and telemetry costs remain. This branch establishes an experiment, not a speedup claim.
+Both entry shapes reuse the same MIR operation emitter. Admission is established before call-graph specialization, so a rejected callee cannot accidentally get a direct entry point. The bounded helper and resumable entry currently duplicate generated body code; measure binary/build size as well as execution time. Runtime hooks, global/descriptor checks, logical metadata and telemetry costs remain. Benefits remain workload-dependent; the validation reports identify the measured revisions and scopes.
 
 Admission prepares block-entry assignment facts and a source-site table once.
 Resumable and direct emission consume those exact site IDs; they do not rebuild
@@ -130,6 +130,9 @@ Both host paths verify the current artifact telemetry policy before runtime setu
 
 [Foundation validation](validation/README.md) records the current-base bytecode
 comparison, raw trials, correctness checks and the remaining acceptance boundaries.
+[Array-access validation](validation/array-access.md) records the statically
+callable heap operations, release inlining evidence, matched execution costs
+and the remaining synchronization cost.
 
 The differential suite builds generated Rust and runs it through the real engine. It checks arithmetic boundaries, evaluation order, control flow, recursion, fallback, errors and actual compiled execution. Every case must enter its generated frame unless the test explicitly requires bytecode fallback. Helpers can additionally require direct or resumable execution by object identity. Test instrumentation edits parsed Rust syntax and records both entry shapes; it does not depend on an emitted signature's whitespace. A regression test proves one native function cannot mask another case's fallback.
 
