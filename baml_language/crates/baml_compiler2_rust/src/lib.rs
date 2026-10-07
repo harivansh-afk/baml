@@ -200,7 +200,7 @@ pub fn emit_module<'db>(
         Ok((slot, *object))
     };
     let mut source = String::from(
-        "#[allow(unused_imports)]\nuse bex_vm_types::{compiled::{self, CallTarget, SiteId, CompiledAction, CompiledCode, CompiledFrame, CompiledHeap, CompiledRuntime, CompiledSite, ResumeInput, SiteKind}, errors::{VmInternalError, VmPanic, VmRustFnError}, int::{self, Int63}, EarlyYieldCheck, GlobalIndex, ObjectIndex, HeapPtr, RootHaver, Value};\nuse std::collections::HashMap;\n",
+        "#[allow(unused_imports)]\nuse bex_vm_types::{compiled::{self, CallTarget, SiteId, CompiledAction, CompiledCode, CompiledFrame, CompiledHeap, CompiledRuntime, CompiledSite, ResumeInput, SiteKind}, errors::{VmInternalError, VmPanic, VmRustFnError}, int::{self, Int63}, EarlyYieldCheck, GlobalIndex, ObjectIndex, HeapPtr, PermitProof, RootHaver, Value};\nuse std::collections::HashMap;\n",
     );
     let mut compiled = Vec::new();
     let mut fallback = Vec::new();

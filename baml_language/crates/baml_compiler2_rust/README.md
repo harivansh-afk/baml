@@ -73,14 +73,16 @@ tokens rather than using MIR's diagnostic formatting.
 
 Arguments remain rooted on the eval stack until a compiled body takes ownership. `RootHaver` exposes and forwards array references owned by suspended compiled state. Array locals hold BEX references, so copying or passing an array preserves its identity without copying its contents. Allocating an array creates a new object through the VM's existing TLAB.
 
-`CompiledHeap` exposes checked integer-array operations during one active heap permit. Array accesses use the existing container locks, index rules and mutation barrier. Helpers return values, never borrowed heap storage or guards; nothing borrowed survives a call or yield. Roots are currently conservative: an array local stays rooted until overwritten or its activation ends. Precise last-use clearing is future optimization work; MIR `Drop` evaluates and discards a value and does not end the source local's lifetime.
+`CompiledHeap` retains call-boundary validation and allocation. Generated integer-array reads, writes and length checks call shared `bex_vm_types::compiled` functions directly. They receive the existing `PermitProof` for one resume interval, so LLVM can see their bodies without a virtual runtime call per element. The unsafe helper contract also requires current, live operands; generated state supplies those roots. Helpers return values, never borrowed heap storage or guards.
+
+Array accesses keep the existing container lock and shared negative-index rules. Fixed integer stores use locked slice access that cannot change the backing allocation's length or capacity, so they produce no payload debt and need no reference write barrier. Resizing still uses allocation-metered guards; heap-valued stores still require barriers. Nothing borrowed survives a call or yield. Roots are currently conservative: an array local stays rooted until overwritten or its activation ends. Precise last-use clearing is future optimization work; MIR `Drop` evaluates and discards a value and does not end the source local's lifetime.
 
 Loops cooperate through the existing yield checker. GC waits for permits to be released. Cancellation remains a language checkpoint at sys-op/await boundaries, with shielding inherited through compiled calls from interpreted cleanup. A GC yield does not introduce a new cancellation point.
 
 The inlined checkpoint decrements the loaned checker; only a due checkpoint
 calls the runtime to settle TLAB payload debt before polling pressure. Array
 allocation notifies that same checker when spending crosses the GC budget, and
-array writes use the current allocation-metered guard. Installed compiled
+fixed integer writes retain the container lock without exposing resize operations. Installed compiled
 bindings participate in the heap footprint census. GC root spans measure the
 collection pause, not the mutator's park wait; keep those measurements separate.
 

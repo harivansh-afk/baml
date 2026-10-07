@@ -47,8 +47,8 @@ impl<T> LockedContainer<T> {
     pub fn lock(&self) -> LockedReadGuard<'_, T> {
         let access = self.mutex.enter();
         // SAFETY: we just acquired the lock; no other thread can hold a
-        // `&mut` to `data` (the only place `&mut data` is materialized
-        // is `lock_mut`, which also takes the lock). Lifetime is tied
+        // `&mut` to `data` (both mutable access paths also take the lock).
+        // Lifetime is tied
         // to `&self`, which is tied to the access guard.
         let data = unsafe { &*self.data.get() };
         LockedReadGuard {
@@ -162,6 +162,19 @@ impl<T: Clone> Clone for LockedContainer<T> {
 }
 
 impl<T> LockedContainer<Vec<T>> {
+    /// Mutate elements under the existing lock without exposing the `Vec` itself.
+    /// The slice cannot change length or capacity, so this operation cannot
+    /// change the backing allocation's footprint and needs no allocation debt.
+    /// Callers remain responsible for barriers when storing heap references.
+    #[inline]
+    pub fn with_slice_mut<R>(&self, f: impl FnOnce(&mut [T]) -> R) -> R {
+        let _access = self.mutex.enter();
+        // SAFETY: the guard excludes every reader/writer. Only the slice is
+        // exposed, and its borrow cannot escape the closure's invocation.
+        let data = unsafe { &mut *self.data.get() };
+        f(data.as_mut_slice())
+    }
+
     /// Locked convenience: number of elements.
     pub fn len(&self) -> usize {
         self.lock().len()
@@ -638,6 +651,43 @@ impl Map {
 #[cfg(test)]
 mod guard_tests {
     use super::*;
+
+    #[test]
+    fn element_mutation_preserves_storage_and_releases_on_unwind() {
+        let array = LockedContainer::new(Vec::from([1_u64, 2, 3]));
+        let capacity = array.lock().capacity();
+        let previous = array.with_slice_mut(|values| std::mem::replace(&mut values[1], 9));
+        assert_eq!(previous, 2);
+        assert_eq!(&*array.lock(), &[1, 9, 3]);
+        assert_eq!(array.lock().capacity(), capacity);
+
+        let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            array.with_slice_mut(|values| {
+                values[0] = 4;
+                panic!("leave the element operation through unwinding");
+            });
+        }));
+        assert!(failed.is_err());
+        assert_eq!(&*array.lock(), &[4, 9, 3]);
+        assert_eq!(array.lock().capacity(), capacity);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn element_mutation_uses_the_shared_container_lock() {
+        let array = std::sync::Arc::new(LockedContainer::new(vec![0_u64]));
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                let array = std::sync::Arc::clone(&array);
+                scope.spawn(move || {
+                    for _ in 0..1_000 {
+                        array.with_slice_mut(|values| values[0] += 1);
+                    }
+                });
+            }
+        });
+        assert_eq!(&*array.lock(), &[4_000]);
+    }
 
     /// A write guard charges what the store's footprint changed by while it
     /// was held: growth is charged, a shrink is credited, and an in-place

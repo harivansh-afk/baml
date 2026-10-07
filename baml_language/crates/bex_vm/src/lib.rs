@@ -12,7 +12,7 @@
 
 #![warn(clippy::disallowed_methods)]
 
-pub(crate) mod array_index;
+pub(crate) use bex_vm_types::array_index;
 mod call_specialize;
 pub mod compile_artifact;
 pub mod debug;

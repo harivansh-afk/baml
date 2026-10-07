@@ -8,8 +8,12 @@ use std::{collections::HashSet, sync::Arc};
 
 use sha2::{Digest, Sha256};
 
+mod array;
+pub use array::{check_int_array, int_array_get, int_array_len, int_array_set};
+
 use crate::{
-    EarlyYieldCheck, FunctionKind, GlobalIndex, Object, ObjectIndex, Program, RootHaver, Value,
+    EarlyYieldCheck, FunctionKind, GlobalIndex, Object, ObjectIndex, PermitProof, Program,
+    RootHaver, Value,
     errors::{VmInternalError, VmRustFnError},
     indexable::Index,
 };
@@ -76,18 +80,6 @@ pub trait CompiledHeap {
         values: Vec<baml_type::Int63>,
         poll: &mut EarlyYieldCheck,
     ) -> Value;
-    fn int_array_len(&self, array: Value) -> Result<baml_type::Int63, VmRustFnError>;
-    fn int_array_get(
-        &self,
-        array: Value,
-        index: baml_type::Int63,
-    ) -> Result<baml_type::Int63, VmRustFnError>;
-    fn int_array_set(
-        &mut self,
-        array: Value,
-        index: baml_type::Int63,
-        value: baml_type::Int63,
-    ) -> Result<(), VmRustFnError>;
 }
 
 /// Services available while generated code holds the VM's heap permit.
@@ -116,11 +108,17 @@ pub trait CompiledRuntime: CompiledHeap {
 /// State retained while a compiled BAML invocation is suspended. Every heap
 /// reference in that state must participate in `RootHaver`, including state
 /// retained while a bytecode callee executes.
+///
+/// `permit` is valid only for this execution interval. All values passed to
+/// the directly callable heap helpers must be current roots or newly allocated
+/// values under that permit. Neither heap borrows nor the proof may survive a
+/// yield. Runtime hooks must not release the permit while `resume` is running.
 pub trait CompiledFrame: RootHaver {
     fn resume(
         &mut self,
         input: ResumeInput,
         poll: &mut EarlyYieldCheck,
+        permit: PermitProof<'_>,
         runtime: &mut dyn CompiledRuntime,
     ) -> Result<CompiledAction, VmRustFnError>;
 
