@@ -32,7 +32,6 @@ There is no separate `bex_native` runtime. The prototype's integer helpers now h
 
 ## Execution contract
 
-The production integration worktree tracks canary `907a6d9c50` (2026-10-06).
 Recording describes logical BAML calls independently of the executor. Declaration
 trace hooks are a separate selection phase: they can execute BAML and suspend
 before the target starts. Functions with any declared hook currently retain
@@ -64,6 +63,14 @@ During `resume`, the owning boxed state is temporarily held outside the frame ve
 
 Both entry shapes reuse the same MIR operation emitter. Admission is established before call-graph specialization, so a rejected callee cannot accidentally get a direct entry point. The bounded helper and resumable entry currently duplicate generated body code; measure binary/build size as well as execution time. Runtime hooks, global/descriptor checks, logical metadata and telemetry costs remain. This branch establishes an experiment, not a speedup claim.
 
+Admission prepares block-entry assignment facts and a source-site table once.
+Resumable and direct emission consume those exact site IDs; they do not rebuild
+parallel source maps. The release-time assignment check is intentional: MIR's
+general verifier runs only in debug builds, and zero-initialized Rust locals
+must not conceal a missing BAML assignment. Direct-call cycle detection uses
+MIR's existing successor API. Arithmetic operators map explicitly to Rust
+tokens rather than using MIR's diagnostic formatting.
+
 Arguments remain rooted on the eval stack until a compiled body takes ownership. `RootHaver` exposes and forwards array references owned by suspended compiled state. Array locals hold BEX references, so copying or passing an array preserves its identity without copying its contents. Allocating an array creates a new object through the VM's existing TLAB.
 
 `CompiledHeap` exposes checked integer-array operations during one active heap permit. Array accesses use the existing container locks, index rules and mutation barrier. Helpers return values, never borrowed heap storage or guards; nothing borrowed survives a call or yield. Roots are currently conservative: an array local stays rooted until overwritten or its activation ends. Precise last-use clearing is future optimization work; MIR `Drop` evaluates and discards a value and does not end the source local's lifetime.
@@ -87,6 +94,19 @@ Unsupported features are a per-function decision. Missing linked identities, mal
 
 Bindings use the declaring source root and structured declaration path, then the exact linker's package position and global slot. Display names do not bind code. Generation checks the source-content identity. Installed descriptors retain a serialized-image fingerprint and object index; the loader validates them before transformation. Serialization drops machine-code pointers. Relinking or grafting into another index domain removes the compiled implementation and retains the portable body.
 
+This is a post-link AOT export. Package compilation still uses dependency
+interfaces, and the linker still assigns layout and type tags. Existing package
+caches can supply the portable image; generated Rust binds that final image and
+must be regenerated when it changes. This implementation does not provide a
+separately cached, relocatable native object per package. Runtime-compiled and
+grafted packages deliberately remain portable bytecode.
+
+The protocol preserves `GlobalIndex` and `ObjectIndex`, including `heap_debug`'s
+object representation. `SiteId` indexes a compiled source map; `CallTarget`
+indexes a body's call table. They are distinct from each other and from global
+slots. Emission spells numeric constants explicitly; the VM converts source IDs
+at its shared bytecode/compiled location boundary.
+
 ## Build an executable
 
 From a BAML toolchain that includes this backend:
@@ -106,7 +126,28 @@ Both host paths verify the current artifact telemetry policy before runtime setu
 
 ## Validation and remaining work
 
-The differential suite builds generated Rust and runs it through the real engine. It checks arithmetic boundaries, evaluation order, control flow, recursion, fallback, errors and actual compiled execution. Array cases require every named target to compile and execute, and check allocation, returned arrays, alias-visible mutation, rebinding and error order. The array-contract fixture forces real moving collections with arrays rooted only by generated state, collects while a compiled caller is suspended, and exercises mixed calls, spawn and sustained allocation. The engine-contract fixture checks cancellation, cleanup shielding, logical call relationships, explicit captures, and recorded source locations through the recorder/reader. Separate VM tests exercise state-only roots, forced loop yields, stale bindings and hidden continuation failures.
+[Foundation validation](validation/README.md) records the current-base bytecode
+comparison, raw trials, correctness checks and the remaining acceptance boundaries.
+
+The differential suite builds generated Rust and runs it through the real engine. It checks arithmetic boundaries, evaluation order, control flow, recursion, fallback, errors and actual compiled execution. Every case must enter its generated frame unless the test explicitly requires bytecode fallback. Helpers can additionally require direct or resumable execution by object identity. Test instrumentation edits parsed Rust syntax and records both entry shapes; it does not depend on an emitted signature's whitespace. A regression test proves one native function cannot mask another case's fallback.
+
+Array cases check allocation, returned arrays, alias-visible mutation, rebinding and error order. The array-contract fixture forces real moving collections with arrays rooted only by generated state, collects while a compiled caller is suspended, and exercises mixed calls, spawn and sustained allocation. The engine-contract fixture checks cancellation, cleanup shielding, logical call relationships, explicit captures, and recorded source locations through the recorder/reader. Separate VM tests exercise state-only roots, forced loop yields, stale bindings and hidden continuation failures.
+
+Differential agreement alone cannot validate shared compiler/runtime changes:
+both executions use the same branch. The bytecode corpus, existing runtime
+regressions and independent arithmetic/source-location assertions are also
+required. In particular, multiline diagnostic lines now consistently use the
+normalized expression start, rather than the former non-sequence-point end-line
+heuristic. `terminator_spans` pins that intentional change at O0, O1 and O2.
+
+Review the shared VM changes separately from code generation: the common frame
+layout, call/return guards, continuation source restoration, and the
+`exec_compact` inlining boundary all affect bytecode-only programs. Performance
+acceptance needs a comparison with the PR base, not just native versus bytecode
+in the modified runtime. The additive Btel minor 11 coordinates and the Stow
+exceptions also need review by their respective maintainers. The architecture
+policy calls for two-person MIR/Emit discussion; local tests do not establish
+that design approval or acceptance by deployed telemetry consumers.
 
 On the previously checked 64-bit build without `heap_debug`, the common frame was 128 bytes (previously 112). Resumable entries retain a state allocation and general calls construct argument vectors. Eligible direct callees avoid those allocations and expose concrete Rust calls, but keep logical BAML metadata. Remeasure layout, generated code and execution on this branch before attributing a performance change.
 
