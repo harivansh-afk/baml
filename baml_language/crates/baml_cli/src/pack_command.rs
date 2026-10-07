@@ -46,7 +46,7 @@ use crate::{
 #[derive(Debug)]
 struct PackCompilation {
     program: Program,
-    rust: Option<baml_compiler2_rust::NativeModule>,
+    rust: Option<baml_db::rust::NativeModule>,
     needs_format_hint: bool,
 }
 
@@ -471,7 +471,7 @@ impl PackArgs {
         db: &ProjectDatabase,
         package: baml_db::SourceRoot,
         cache: Option<&crate::bytecode_cache::CacheContext>,
-    ) -> Result<(Program, Option<baml_compiler2_rust::NativeModule>)> {
+    ) -> Result<(Program, Option<baml_db::rust::NativeModule>)> {
         let linked = crate::bytecode_cache::compile_program_with_layout(db, package, cache)
             .map_err(|e| anyhow!("compilation failed: {e:?}"))?;
         let rust = if self.emit_rust_project.is_some() {
@@ -484,12 +484,7 @@ impl PackArgs {
                         .copied()
                 })
                 .collect();
-            Some(baml_compiler2_rust::emit_module(
-                db,
-                &linked.program,
-                &linked.package_roots,
-                &functions,
-            )?)
+            Some(baml_db::rust::emit_module(db, &linked, &functions)?)
         } else {
             None
         };

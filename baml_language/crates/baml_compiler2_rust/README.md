@@ -12,6 +12,12 @@ checked BAML -> MIR -> bytecode -> interpreter
 
 ## Ownership
 
+Compiler hosts call `baml_db::rust::emit_module`, enabled by the opt-in
+`baml_db/rust-backend` feature. The driver supplies the exact linked package map,
+live source hash and canonical declaration-coordinate resolver. The Rust emitter
+uses name/type/MIR queries and runtime data; it has no bytecode-emitter or engine
+implementation dependency. Runtime-only hosts leave this compiler feature off.
+
 | Responsibility | Owner |
 | --- | --- |
 | Admission, typed locals, continuations, Rust emission | `baml_compiler2_rust` |

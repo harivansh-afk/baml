@@ -16,6 +16,10 @@ doctest = false
 [lints]
 workspace = true
 
+[features]
+# Compiler hosts opt in; runtime-only consumers do not need the Rust emitter.
+rust-backend = [ "dep:baml_compiler2_rust" ]
+
 [dependencies]
 baml_artifact = { workspace = true }
 baml_base = { workspace = true }
@@ -25,6 +29,7 @@ baml_compiler2_emit = { workspace = true }
 baml_compiler2_hir = { workspace = true }
 baml_compiler2_hir_ty = { workspace = true }
 baml_compiler2_mir = { workspace = true }
+baml_compiler2_rust = { workspace = true, optional = true }
 baml_compiler_diagnostics = { workspace = true }
 baml_compiler_lexer = { workspace = true }
 baml_compiler_parser = { workspace = true }

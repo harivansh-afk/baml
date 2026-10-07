@@ -34,7 +34,7 @@ pub(crate) fn write(
     directory: &Path,
     runtime: &Path,
     envelope: &[u8],
-    module: &baml_compiler2_rust::NativeModule,
+    module: &baml_db::rust::NativeModule,
 ) -> Result<()> {
     let runtime = runtime
         .canonicalize()
@@ -155,7 +155,7 @@ mod tests {
         std::fs::create_dir(&directory).unwrap();
         std::fs::write(directory.join("Cargo.toml"), "keep").unwrap();
         let runtime = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let module = baml_compiler2_rust::NativeModule {
+        let module = baml_db::rust::NativeModule {
             source: String::new(),
             compiled: vec![],
             fallback: vec![],

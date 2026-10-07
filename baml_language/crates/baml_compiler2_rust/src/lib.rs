@@ -16,7 +16,7 @@ use baml_compiler2_mir::{
     lower_function,
 };
 use baml_type::{Literal, RuntimeTy};
-use bex_vm_types::{ConstValue, Program};
+use bex_vm_types::{ConstValue, DeclPath, Program};
 
 mod direct;
 mod function;
@@ -138,12 +138,16 @@ struct Candidate<'db> {
 /// Generate overrides for selected source functions in this exact linked image.
 /// `package_roots` must come from the program driver's `LinkedProgram`; it must
 /// not be reconstructed from package names. The database must be checked first.
+/// The driver supplies the current source hash and canonical declaration
+/// coordinates; this backend does not query or depend on the bytecode emitter.
 /// Generated `install` verifies the entire image before installing any code.
 pub fn emit_module<'db>(
-    db: &'db dyn baml_compiler2_emit::Db,
+    db: &'db dyn baml_compiler2_mir::Db,
     program: &Program,
     package_roots: &[SourceRoot],
     functions: &[FunctionLoc<'db>],
+    source_content_hash: [u8; 32],
+    function_address: impl Fn(FunctionRef<'db>) -> Option<(SourceRoot, DeclPath)>,
 ) -> Result<NativeModule, CompileError> {
     let error = |reason: String| CompileError {
         function: "<program>".into(),
@@ -155,10 +159,7 @@ pub fn emit_module<'db>(
         ));
     }
     program.validate().map_err(|e| error(e.to_string()))?;
-    let root = package_roots[program.root as usize];
-    if program.source_content_hash
-        != Some(baml_compiler2_emit::project_source_content_hash(db, root))
-    {
+    if program.source_content_hash != Some(source_content_hash) {
         return Err(error(
             "source database does not match the linked program".into(),
         ));
@@ -172,7 +173,7 @@ pub fn emit_module<'db>(
         return Err(error("duplicate linked package identity".into()));
     }
     let resolve = |reference: FunctionRef<'db>| -> Result<(usize, usize), Rejection> {
-        let (root, path) = baml_compiler2_emit::function_address(db, reference)
+        let (root, path) = function_address(reference)
             .ok_or_else(|| Rejection::unsupported("callable has no declaration slot"))?;
         let package = *roots.get(&root).ok_or_else(|| {
             Rejection::invalid("callable's package is absent from the linked image")
@@ -304,7 +305,7 @@ pub fn emit_module<'db>(
 }
 
 fn candidate<'db>(
-    db: &'db dyn baml_compiler2_emit::Db,
+    db: &'db dyn baml_compiler2_mir::Db,
     loc: FunctionLoc<'db>,
 ) -> Result<Candidate<'db>, Rejection> {
     let data = function_data(db, loc);

@@ -19,6 +19,8 @@ pub mod discovery;
 pub mod manifest;
 pub mod program;
 pub mod project_resolution;
+#[cfg(feature = "rust-backend")]
+pub mod rust;
 pub mod stdlib_prefix;
 pub mod testing;
 

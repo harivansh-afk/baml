@@ -17,10 +17,9 @@ doctest = false
 workspace = true
 
 [dependencies]
-baml_compiler2_rust = { workspace = true }
 baml_artifact = { workspace = true }
 baml_builtins2 = { workspace = true }
-baml_db = { workspace = true }
+baml_db = { workspace = true, features = [ "rust-backend" ] }
 baml_env = { workspace = true }
 baml_exec = { workspace = true }
 baml_fmt = { workspace = true }

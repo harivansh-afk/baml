@@ -7,8 +7,8 @@ use std::{fmt::Write as _, path::Path, process::Command, sync::Arc};
 use baml_compiler_diagnostics::Severity;
 use baml_compiler2_hir::{item_data::file_functions, loc::FunctionLoc};
 use baml_compiler2_mir::OptLevel;
-use baml_compiler2_rust::emit_module;
 use baml_db::ProjectDatabase;
+use baml_db::rust::emit_module;
 use baml_test_support as stdlib_prefix;
 use bex_engine::{BexCallArg, BexEngine, BexExternalValue, FunctionCallContextBuilder};
 use sys_native::SysOpsExt;
@@ -188,7 +188,7 @@ fn admission_is_per_function_and_recursion_uses_baml_frames() {
     );
     let image = linked(&db);
     let functions = candidates(&db);
-    let module = emit_module(&db, &image.program, &image.package_roots, &functions).unwrap();
+    let module = emit_module(&db, &image, &functions).unwrap();
     assert_eq!(module.compiled.len(), 2);
     assert!(module.fallback.iter().any(|f| f.function == "slow"));
     assert!(module.fallback.iter().any(|f| f.function == "caught"));
@@ -238,7 +238,7 @@ fn direct_admission_requires_bounded_scalar_call_regions() {
     let db = checked_db(&source);
     let image = linked(&db);
     let functions = candidates(&db);
-    let module = emit_module(&db, &image.program, &image.package_roots, &functions).unwrap();
+    let module = emit_module(&db, &image, &functions).unwrap();
     let direct = |name: &str| {
         module
             .direct_calls
@@ -257,7 +257,7 @@ fn direct_admission_requires_bounded_scalar_call_regions() {
     }
     let mut reversed = functions;
     reversed.reverse();
-    let reversed = emit_module(&db, &image.program, &image.package_roots, &reversed).unwrap();
+    let reversed = emit_module(&db, &image, &reversed).unwrap();
     for entry in &module.direct_calls {
         assert_eq!(
             Some(entry),
@@ -477,7 +477,7 @@ fn unsupported_heap_types_and_iterators_keep_bytecode() {
     "#,
     );
     let image = linked(&db);
-    let module = emit_module(&db, &image.program, &image.package_roots, &candidates(&db)).unwrap();
+    let module = emit_module(&db, &image, &candidates(&db)).unwrap();
     assert!(module.compiled.is_empty());
     assert_eq!(module.fallback.len(), 3);
 }
@@ -494,7 +494,7 @@ async fn agree_with_compiled(
 ) {
     let db = checked_db(source);
     let image = linked(&db);
-    let module = emit_module(&db, &image.program, &image.package_roots, &candidates(&db)).unwrap();
+    let module = emit_module(&db, &image, &candidates(&db)).unwrap();
     assert!(
         !module.compiled.is_empty(),
         "test never exercises generated code"
@@ -704,6 +704,51 @@ fn linked(db: &ProjectDatabase) -> baml_db::program::LinkedProgram {
     )
     .unwrap()
 }
+
+// These checks cross the driver/backend boundary. A BAML test cannot supply a
+// stale image or a malformed compiler-root map to the Rust emitter.
+#[test]
+fn driver_rejects_stale_sources_and_invalid_link_metadata() {
+    let mut db = checked_db("function value() -> int { 7 }");
+    let mut image = linked(&db);
+    assert_eq!(
+        emit_module(&db, &image, &candidates(&db))
+            .unwrap()
+            .compiled
+            .len(),
+        1
+    );
+
+    let extra = image.package_roots[0];
+    image.package_roots.push(extra);
+    assert!(
+        emit_module(&db, &image, &candidates(&db))
+            .unwrap_err()
+            .reason
+            .contains("identity map")
+    );
+    image.package_roots.pop();
+
+    let root = db.workspace_root().unwrap();
+    let path = db.workspace_files()[0].path(&db);
+    db.add_or_update_file_in(root, &path, "function value() -> int { 8 }");
+    assert!(
+        emit_module(&db, &image, &candidates(&db))
+            .unwrap_err()
+            .reason
+            .contains("source database")
+    );
+
+    let fresh = linked(&db);
+    assert_eq!(
+        emit_module(&db, &fresh, &candidates(&db))
+            .unwrap()
+            .compiled
+            .len(),
+        1
+    );
+}
+
 fn candidates(db: &ProjectDatabase) -> Vec<FunctionLoc<'_>> {
     db.workspace_files()
         .into_iter()
@@ -733,7 +778,7 @@ fn generated_code_preserves_engine_contract() {
     let source = include_str!("support/engine_contract.baml");
     let db = checked_db(source);
     let image = linked(&db);
-    let module = emit_module(&db, &image.program, &image.package_roots, &candidates(&db)).unwrap();
+    let module = emit_module(&db, &image, &candidates(&db)).unwrap();
     for name in ["selected", "hidden_target"] {
         assert!(
             module
@@ -796,7 +841,7 @@ fn generated_code_preserves_engine_contract() {
 fn declared_trace_hooks_are_skipped_with_telemetry_off() {
     let db = checked_db(include_str!("support/engine_contract.baml"));
     let image = linked(&db);
-    let module = emit_module(&db, &image.program, &image.package_roots, &candidates(&db)).unwrap();
+    let module = emit_module(&db, &image, &candidates(&db)).unwrap();
     let native = format!(
         "mod generated {{ {} }}\n{}",
         module.source,
@@ -834,7 +879,7 @@ async fn main() {
 fn generated_arrays_survive_gc_and_mixed_suspension() {
     let db = checked_db(include_str!("support/array_contract.baml"));
     let image = linked(&db);
-    let module = emit_module(&db, &image.program, &image.package_roots, &candidates(&db)).unwrap();
+    let module = emit_module(&db, &image, &candidates(&db)).unwrap();
     let callables = image.program.rendered_callables();
     for name in [
         "allocated_loop",
@@ -872,7 +917,7 @@ fn generated_arrays_survive_gc_and_mixed_suspension() {
 fn direct_regions_charge_polling_without_suspending_direct_frames() {
     let db = checked_db(include_str!("support/poll_contract.baml"));
     let image = linked(&db);
-    let module = emit_module(&db, &image.program, &image.package_roots, &candidates(&db)).unwrap();
+    let module = emit_module(&db, &image, &candidates(&db)).unwrap();
     assert!(module.fallback.is_empty(), "{:?}", module.fallback);
     for name in ["leaf", "middle", "outer", "failing"] {
         assert!(
