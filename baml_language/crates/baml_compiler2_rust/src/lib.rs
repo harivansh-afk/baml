@@ -16,7 +16,7 @@ use baml_compiler2_mir::{
     lower_function,
 };
 use baml_type::{Literal, RuntimeTy};
-use bex_vm_types::{ConstValue, DeclPath, Program};
+use bex_vm_types::{ConstValue, DeclPath, GlobalIndex, ObjectIndex, Program, compiled::CallTarget};
 
 mod direct;
 mod function;
@@ -73,7 +73,7 @@ impl NativeType {
 pub struct NativeModule {
     pub source: String,
     /// Linked object indices that have generated implementations.
-    pub compiled: Vec<usize>,
+    pub compiled: Vec<ObjectIndex>,
     pub fallback: Vec<Unsupported>,
     /// Direct-call eligibility for each admitted native function.
     pub direct_calls: Vec<DirectSupport>,
@@ -89,8 +89,8 @@ pub struct DirectSupport {
 struct Admitted<'db> {
     loc: FunctionLoc<'db>,
     name: String,
-    object: usize,
-    global: usize,
+    object: ObjectIndex,
+    global: GlobalIndex,
     candidate: Candidate<'db>,
     calls: function::ResolvedCalls<'db>,
     prepared: function::PreparedFunction,
@@ -173,7 +173,7 @@ pub fn emit_module<'db>(
     if roots.len() != package_roots.len() {
         return Err(error("duplicate linked package identity".into()));
     }
-    let resolve = |reference: FunctionRef<'db>| -> Result<(usize, usize), Rejection> {
+    let resolve = |reference: FunctionRef<'db>| -> Result<(GlobalIndex, ObjectIndex), Rejection> {
         let (root, path) = function_address(reference)
             .ok_or_else(|| Rejection::unsupported("callable has no declaration slot"))?;
         let package = *roots.get(&root).ok_or_else(|| {
@@ -197,10 +197,10 @@ pub fn emit_module<'db>(
                 "callable declaration is not a function object",
             ));
         }
-        Ok((slot.raw(), object.raw()))
+        Ok((slot, *object))
     };
     let mut source = String::from(
-        "#[allow(unused_imports)]\nuse bex_vm_types::{compiled::{self, CompiledAction, CompiledCode, CompiledFrame, CompiledHeap, CompiledRuntime, CompiledSite, ResumeInput, SiteKind}, errors::{VmInternalError, VmPanic, VmRustFnError}, int::{self, Int63}, EarlyYieldCheck, HeapPtr, RootHaver, Value};\nuse std::collections::HashMap;\n",
+        "#[allow(unused_imports)]\nuse bex_vm_types::{compiled::{self, CallTarget, SiteId, CompiledAction, CompiledCode, CompiledFrame, CompiledHeap, CompiledRuntime, CompiledSite, ResumeInput, SiteKind}, errors::{VmInternalError, VmPanic, VmRustFnError}, int::{self, Int63}, EarlyYieldCheck, GlobalIndex, ObjectIndex, HeapPtr, RootHaver, Value};\nuse std::collections::HashMap;\n",
     );
     let mut compiled = Vec::new();
     let mut fallback = Vec::new();
@@ -220,7 +220,7 @@ pub fn emit_module<'db>(
                     let callee = direct_callee(call).map_err(Rejection::unsupported)?;
                     if let std::collections::hash_map::Entry::Vacant(entry) = calls.entry(callee) {
                         let (slot, _) = resolve(callee)?;
-                        entry.insert(slots.len());
+                        entry.insert(CallTarget::from_raw(slots.len()));
                         slots.push(slot);
                     }
                 }
@@ -294,7 +294,7 @@ pub fn emit_module<'db>(
     for object in &compiled {
         let _ = writeln!(
             source,
-            "        compiled::CompiledBinding {{ object: {object}, code: &CODE_{object} }},"
+            "        compiled::CompiledBinding {{ object: ObjectIndex::from_raw({object}), code: &CODE_{object} }},"
         );
     }
     source.push_str("    ])\n}\n");

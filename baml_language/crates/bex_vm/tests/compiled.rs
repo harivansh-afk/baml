@@ -2,20 +2,23 @@
 //! compiled bodies exercise transitions and GC with deliberately distinct PCs.
 #![cfg(not(target_arch = "wasm32"))]
 
-use baml_test_support::compile_source;
-use bex_vm::package_baml::{Continuation, NativeCallResult};
-use bex_vm::{BexVm, NativeFunction, VmExecState};
-use bex_vm_types::{
-    EarlyYieldCheck, FunctionKind, HeapPtr, Object, ObjectIndex, Program, RootHaver, Value,
-    compiled::*,
-    errors::{VmInternalError, VmPanic, VmRustFnError},
-};
 use std::{
     collections::HashMap,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
+};
+
+use baml_test_support::compile_source;
+use bex_vm::{
+    BexVm, NativeFunction, VmExecState,
+    package_baml::{Continuation, NativeCallResult},
+};
+use bex_vm_types::{
+    EarlyYieldCheck, FunctionKind, HeapPtr, Object, ObjectIndex, Program, RootHaver, Value,
+    compiled::*,
+    errors::{VmInternalError, VmPanic, VmRustFnError},
 };
 
 fn attach(program: &mut Program, name: &str, create: FrameFactory, sites: usize) -> usize {
@@ -43,7 +46,15 @@ fn attach(program: &mut Program, name: &str, create: FrameFactory, sites: usize)
         calls: &[],
     }));
     let fingerprint = program_fingerprint(program).unwrap();
-    install(program, fingerprint, &[CompiledBinding { object, code }]).unwrap();
+    install(
+        program,
+        fingerprint,
+        &[CompiledBinding {
+            object: ObjectIndex::from_raw(object),
+            code,
+        }],
+    )
+    .unwrap();
     object
 }
 
@@ -57,8 +68,8 @@ impl RootHaver for Sum {
     fn forward_roots(&mut self, _: &HashMap<HeapPtr, HeapPtr>) {}
 }
 impl CompiledFrame for Sum {
-    fn site(&self) -> usize {
-        0
+    fn site(&self) -> SiteId {
+        SiteId::from_raw(0)
     }
     fn resume(
         &mut self,
@@ -110,7 +121,10 @@ fn compiled_bindings_cannot_skip_declared_trace_selection() {
         install(
             &mut program,
             fingerprint,
-            &[CompiledBinding { object, code }]
+            &[CompiledBinding {
+                object: ObjectIndex::from_raw(object),
+                code
+            }]
         )
         .is_err()
     );
@@ -178,8 +192,8 @@ impl RootHaver for Hold {
     }
 }
 impl CompiledFrame for Hold {
-    fn site(&self) -> usize {
-        0
+    fn site(&self) -> SiteId {
+        SiteId::from_raw(0)
     }
     fn resume(
         &mut self,
@@ -271,8 +285,8 @@ impl RootHaver for Seven {
     fn forward_roots(&mut self, _: &HashMap<HeapPtr, HeapPtr>) {}
 }
 impl CompiledFrame for Seven {
-    fn site(&self) -> usize {
-        150
+    fn site(&self) -> SiteId {
+        SiteId::from_raw(150)
     }
     fn resume(
         &mut self,

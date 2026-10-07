@@ -9,9 +9,20 @@ use std::{collections::HashSet, sync::Arc};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    EarlyYieldCheck, FunctionKind, Object, Program, RootHaver, Value,
+    EarlyYieldCheck, FunctionKind, GlobalIndex, Object, ObjectIndex, Program, RootHaver, Value,
     errors::{VmInternalError, VmRustFnError},
+    indexable::Index,
 };
+
+/// Marker for an exact location in one compiled body's source map.
+#[derive(Clone, Copy, Debug)]
+pub struct SiteIdKind;
+pub type SiteId = Index<SiteIdKind>;
+
+/// Marker for a position in one compiled body's call table, not a global slot.
+#[derive(Clone, Copy, Debug)]
+pub struct CallTargetKind;
+pub type CallTarget = Index<CallTargetKind>;
 
 /// The input to one bounded execution interval. A call result is delivered
 /// exactly once; GC parking resumes with `Continue`.
@@ -44,7 +55,10 @@ pub fn read_bool(value: Value) -> Result<bool, VmInternalError> {
 #[derive(Debug)]
 pub enum CompiledAction {
     Return(Value),
-    Call { target: usize, args: Vec<Value> },
+    Call {
+        target: CallTarget,
+        args: Vec<Value>,
+    },
     Yield,
 }
 
@@ -86,8 +100,8 @@ pub trait CompiledRuntime: CompiledHeap {
 
     fn enter_direct(
         &mut self,
-        caller_site: usize,
-        global: usize,
+        caller_site: SiteId,
+        global: GlobalIndex,
         code: &'static CompiledCode,
         args: &[Value],
     ) -> Result<(), VmRustFnError>;
@@ -96,7 +110,7 @@ pub trait CompiledRuntime: CompiledHeap {
 
     /// Leave failed activations for the existing BAML unwinder. A parent must
     /// not overwrite a deeper callee's faulting site while propagating an error.
-    fn fail_direct(&mut self, code: &'static CompiledCode, site: usize);
+    fn fail_direct(&mut self, code: &'static CompiledCode, site: SiteId);
 }
 
 /// State retained while a compiled BAML invocation is suspended. Every heap
@@ -111,7 +125,7 @@ pub trait CompiledFrame: RootHaver {
     ) -> Result<CompiledAction, VmRustFnError>;
 
     /// Exact source site of the current operation, distinct from resume state.
-    fn site(&self) -> usize;
+    fn site(&self) -> SiteId;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -134,7 +148,7 @@ pub struct CompiledCode {
     pub create: FrameFactory,
     pub sites: &'static [CompiledSite],
     /// Absolute global slots in the exact linked image, indexed by `Call.target`.
-    pub calls: &'static [usize],
+    pub calls: &'static [GlobalIndex],
 }
 
 pub type FrameFactory =
@@ -163,7 +177,7 @@ impl CompiledCode {
 
 #[derive(Debug)]
 pub struct CompiledBinding {
-    pub object: usize,
+    pub object: ObjectIndex,
     pub code: &'static CompiledCode,
 }
 
@@ -173,7 +187,7 @@ pub struct CompiledBinding {
 pub struct InstalledCode {
     code: &'static CompiledCode,
     fingerprint: [u8; 32],
-    object: usize,
+    object: ObjectIndex,
 }
 
 impl std::ops::Deref for InstalledCode {
@@ -201,7 +215,7 @@ pub fn validate_bindings(program: &Program) -> Result<(), VmInternalError> {
         if let Object::Function(function) = object
             && let Some(code) = &function.compiled
             && (code.fingerprint != fingerprint
-                || code.object != index
+                || code.object.raw() != index
                 || !function.runtime_package.is_null())
         {
             return Err(VmInternalError::InvalidCompiledCode {
@@ -236,10 +250,10 @@ pub fn install(
     }
     let mut seen = HashSet::new();
     for binding in bindings {
-        if !seen.insert(binding.object) {
+        if !seen.insert(binding.object.raw()) {
             return Err(invalid("duplicate compiled binding"));
         }
-        let Some(Object::Function(function)) = program.objects.get(binding.object) else {
+        let Some(Object::Function(function)) = program.objects.get(binding.object.raw()) else {
             return Err(invalid("compiled target is not a function"));
         };
         if !matches!(function.kind, FunctionKind::Bytecode)
@@ -277,7 +291,7 @@ pub fn install(
             return Err(invalid("invalid compiled source sites"));
         }
         for &slot in binding.code.calls {
-            let Some(crate::ConstValue::Object(index)) = program.globals.get(slot) else {
+            let Some(crate::ConstValue::Object(index)) = program.globals.get(slot.raw()) else {
                 return Err(invalid("compiled call target is not an object global"));
             };
             if !matches!(program.objects.get(index.raw()), Some(Object::Function(_))) {
@@ -286,9 +300,7 @@ pub fn install(
         }
     }
     for binding in bindings {
-        let Object::Function(function) =
-            &mut program.objects[crate::ObjectIndex::from_raw(binding.object)]
-        else {
+        let Object::Function(function) = &mut program.objects[binding.object] else {
             unreachable!("validated before mutation")
         };
         function.compiled = Some(Arc::new(InstalledCode {

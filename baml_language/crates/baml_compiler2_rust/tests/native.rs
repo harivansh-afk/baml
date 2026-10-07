@@ -545,7 +545,9 @@ async fn agree_with_coverage(
     for name in coverage.fallback {
         let object = callables[&format!("user.{name}")].object.raw();
         assert!(
-            !module.compiled.contains(&object),
+            !module
+                .compiled
+                .contains(&bex_vm_types::ObjectIndex::from_raw(object)),
             "{name} must exercise bytecode fallback"
         );
     }
@@ -560,7 +562,9 @@ async fn agree_with_coverage(
     for (name, entry) in required {
         let object = callables[&format!("user.{name}")].object.raw();
         assert!(
-            module.compiled.contains(&object),
+            module
+                .compiled
+                .contains(&bex_vm_types::ObjectIndex::from_raw(object)),
             "{name} unexpectedly fell back: {:?}",
             module.fallback
         );
@@ -861,7 +865,9 @@ fn generated_code_preserves_engine_contract() {
             .object
             .raw();
         assert!(
-            module.compiled.contains(&id),
+            module
+                .compiled
+                .contains(&bex_vm_types::ObjectIndex::from_raw(id)),
             "{name} should use native-to-bytecode interop"
         );
     }
@@ -958,7 +964,7 @@ fn generated_arrays_survive_gc_and_mixed_suspension() {
         assert!(
             module
                 .compiled
-                .contains(&callables[&format!("user.{name}")].object.raw()),
+                .contains(&callables[&format!("user.{name}")].object),
             "{name} fell back: {:?}",
             module.fallback
         );

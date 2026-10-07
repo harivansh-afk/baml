@@ -7,6 +7,7 @@ use std::collections::{HashMap, VecDeque};
 use baml_compiler2_hir::loc::DeclRef;
 use baml_compiler2_hir_ty::extern_loc::FunctionRef;
 use baml_compiler2_mir::Terminator;
+use bex_vm_types::{GlobalIndex, ObjectIndex};
 
 use crate::{Admitted, DirectSupport, NativeType, direct_callee};
 
@@ -15,8 +16,8 @@ const MAX_DEPTH: usize = 16;
 const MAX_LOCALS: usize = 128;
 
 pub(crate) struct Target {
-    pub object: usize,
-    pub global: usize,
+    pub object: ObjectIndex,
+    pub global: GlobalIndex,
     pub parameters: Vec<NativeType>,
     pub result: NativeType,
     pub(crate) work: usize,

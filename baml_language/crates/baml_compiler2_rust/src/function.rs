@@ -11,15 +11,18 @@ use baml_compiler2_mir::{
     ShortCircuitKind, StatementKind, SwitchKey, Terminator, UnaryOp,
 };
 use baml_type::Int63;
-use bex_vm_types::compiled::{CompiledSite, SiteKind};
+use bex_vm_types::{
+    GlobalIndex, ObjectIndex,
+    compiled::{CallTarget, CompiledSite, SiteId, SiteKind},
+};
 
 use crate::{NativeType, Rejection, direct_callee};
 
 type Result<T> = std::result::Result<T, Rejection>;
 
 pub(crate) struct ResolvedCalls<'db> {
-    pub(crate) ids: HashMap<FunctionRef<'db>, usize>,
-    pub(crate) slots: Vec<usize>,
+    pub(crate) ids: HashMap<FunctionRef<'db>, CallTarget>,
+    pub(crate) slots: Vec<GlobalIndex>,
 }
 
 /// Facts shared by both entry shapes. This is an emission plan over the same
@@ -31,8 +34,8 @@ pub(crate) struct PreparedFunction {
 
 struct PreparedBlock {
     initialized: Vec<bool>,
-    statements: Vec<usize>,
-    terminator: usize,
+    statements: Vec<SiteId>,
+    terminator: SiteId,
 }
 
 pub(crate) fn prepare<'db>(
@@ -127,7 +130,7 @@ pub(crate) fn prepare<'db>(
 }
 
 pub(crate) fn emit<'db>(
-    id: usize,
+    id: ObjectIndex,
     candidate: &crate::Candidate<'db>,
     calls: &ResolvedCalls<'db>,
     prepared: &PreparedFunction,
@@ -137,7 +140,14 @@ pub(crate) fn emit<'db>(
         arity, body, types, ..
     } = candidate;
     let arity = *arity;
-    let (callees, slots) = (&calls.ids, &calls.slots);
+    let id = id.raw();
+    let callees = &calls.ids;
+    let slots = calls
+        .slots
+        .iter()
+        .map(|slot| format!("GlobalIndex::from_raw({})", slot.raw()))
+        .collect::<Vec<_>>()
+        .join(", ");
     let mut emitter = Emitter {
         types,
         callees,
@@ -146,7 +156,7 @@ pub(crate) fn emit<'db>(
         resumable: true,
     };
     let mut out =
-        format!("\nstruct Frame{id} {{ block: usize, site: usize, waiting: Option<usize>,\n");
+        format!("\nstruct Frame{id} {{ block: usize, site: SiteId, waiting: Option<usize>,\n");
     for (i, ty) in types.iter().enumerate() {
         let _ = writeln!(out, "    _{i}: {},", ty.rust());
     }
@@ -172,7 +182,7 @@ pub(crate) fn emit<'db>(
     out.push_str("    }\n}\n");
     let _ = writeln!(
         out,
-        "impl CompiledFrame for Frame{id} {{\n    fn site(&self) -> usize {{ self.site }}\n    fn resume(&mut self, input: ResumeInput, poll: &mut EarlyYieldCheck, runtime: &mut dyn CompiledRuntime) -> Result<CompiledAction, VmRustFnError> {{"
+        "impl CompiledFrame for Frame{id} {{\n    fn site(&self) -> SiteId {{ self.site }}\n    fn resume(&mut self, input: ResumeInput, poll: &mut EarlyYieldCheck, runtime: &mut dyn CompiledRuntime) -> Result<CompiledAction, VmRustFnError> {{"
     );
     out.push_str("        match (self.waiting.take(), input) {\n            (None, ResumeInput::Continue) => {},\n            (Some(call), ResumeInput::Returned(_value)) => match call {\n");
     for (block, plan) in body.blocks.iter().zip(&prepared.blocks) {
@@ -204,7 +214,10 @@ pub(crate) fn emit<'db>(
         emitter.initialized.clone_from(&plan.initialized);
         let _ = writeln!(out, "                {} => {{", block.id.0);
         for (statement, site) in block.statements.iter().zip(&plan.statements) {
-            let _ = writeln!(out, "                    self.site = {site};");
+            let _ = writeln!(
+                out,
+                "                    self.site = SiteId::from_raw({site});"
+            );
             if let Some(line) = emitter.statement(&statement.kind)? {
                 let _ = writeln!(out, "                    {line}");
             }
@@ -214,7 +227,10 @@ pub(crate) fn emit<'db>(
             .as_ref()
             .expect("analysis verified terminators");
         let site = plan.terminator;
-        let _ = writeln!(out, "                    self.site = {site};");
+        let _ = writeln!(
+            out,
+            "                    self.site = SiteId::from_raw({site});"
+        );
         for line in emitter.terminator(term, block.id)? {
             let _ = writeln!(out, "                    {line}");
         }
@@ -223,7 +239,7 @@ pub(crate) fn emit<'db>(
     out.push_str("                _ => return Err(VmInternalError::InvalidCompiledCode { message: \"unknown compiled block\".into() }.into()),\n            }\n        }\n    }\n}\n");
     let _ = writeln!(
         out,
-        "fn create_{id}(args: &[Value], runtime: &dyn CompiledHeap) -> Result<Box<dyn CompiledFrame>, VmInternalError> {{\n    if args.len() != {arity} {{ return Err(VmInternalError::InvalidArgumentCount {{ expected: {arity}, got: args.len() }}); }}\n    Ok(Box::new(Frame{id} {{ block: {}, site: 0, waiting: None,",
+        "fn create_{id}(args: &[Value], runtime: &dyn CompiledHeap) -> Result<Box<dyn CompiledFrame>, VmInternalError> {{\n    if args.len() != {arity} {{ return Err(VmInternalError::InvalidArgumentCount {{ expected: {arity}, got: args.len() }}); }}\n    Ok(Box::new(Frame{id} {{ block: {}, site: SiteId::from_raw(0), waiting: None,",
         body.entry.0
     );
     for (i, ty) in types.iter().enumerate() {
@@ -237,7 +253,7 @@ pub(crate) fn emit<'db>(
     out.push_str("    }))\n}\n");
     let _ = writeln!(
         out,
-        "static CODE_{id}: CompiledCode = CompiledCode {{ create: create_{id}, calls: &{slots:?}, sites: &["
+        "static CODE_{id}: CompiledCode = CompiledCode {{ create: create_{id}, calls: &[{slots}], sites: &["
     );
     for entry in &prepared.sites {
         let CompiledSite {
@@ -265,7 +281,7 @@ pub(crate) fn emit_direct<'db>(
     prepared: &PreparedFunction,
     direct: &HashMap<FunctionRef<'db>, crate::direct::Target>,
 ) -> Result<String> {
-    let id = target.object;
+    let id = target.object.raw();
     let types = &candidate.types;
     let result_ty = types[0];
     let mut emitter = Emitter {
@@ -290,7 +306,7 @@ pub(crate) fn emit_direct<'db>(
         .collect::<Vec<_>>()
         .join(", ");
     let mut out = format!(
-        "\n#[allow(unused_mut, unused_variables, unused_assignments)]\nfn direct_{id}(runtime: &mut dyn CompiledRuntime, caller_site: usize, {parameters}) -> Result<{}, VmRustFnError> {{\n    runtime.enter_direct(caller_site, {}, &CODE_{id}, &[{arguments}])?;\n",
+        "\n#[allow(unused_mut, unused_variables, unused_assignments)]\nfn direct_{id}(runtime: &mut dyn CompiledRuntime, caller_site: SiteId, {parameters}) -> Result<{}, VmRustFnError> {{\n    runtime.enter_direct(caller_site, GlobalIndex::from_raw({}), &CODE_{id}, &[{arguments}])?;\n",
         result_ty.rust(),
         target.global,
     );
@@ -301,7 +317,7 @@ pub(crate) fn emit_direct<'db>(
     }
     let _ = writeln!(
         out,
-        "    let mut block = {};\n    let mut site = 0;\n    let result = (|| -> Result<{}, VmRustFnError> {{\n        loop {{ match block {{",
+        "    let mut block = {};\n    let mut site = SiteId::from_raw(0);\n    let result = (|| -> Result<{}, VmRustFnError> {{\n        loop {{ match block {{",
         candidate.body.entry.0,
         result_ty.rust()
     );
@@ -312,12 +328,16 @@ pub(crate) fn emit_direct<'db>(
         emitter.initialized.clone_from(&plan.initialized);
         let _ = writeln!(out, "            {} => {{", block.id.0);
         for (statement, site) in block.statements.iter().zip(&plan.statements) {
-            let _ = writeln!(out, "                site = {site};");
+            let _ = writeln!(out, "                site = SiteId::from_raw({site});");
             if let Some(line) = emitter.statement(&statement.kind)? {
                 let _ = writeln!(out, "                {line}");
             }
         }
-        let _ = writeln!(out, "                site = {};", plan.terminator);
+        let _ = writeln!(
+            out,
+            "                site = SiteId::from_raw({});",
+            plan.terminator
+        );
         for line in emitter.terminator(
             block.terminator.as_ref().expect("admitted terminator"),
             block.id,
@@ -345,7 +365,7 @@ fn site(
     source: &str,
     line_starts: &[u32],
     call: bool,
-) -> Result<usize> {
+) -> Result<SiteId> {
     let span = span.ok_or_else(|| Rejection::unsupported("missing source location"))?;
     let start = usize::from(span.range.start());
     let end = usize::from(span.range.end());
@@ -361,7 +381,7 @@ fn site(
     } else {
         SiteKind::Operation
     };
-    let id = sites.len();
+    let id = SiteId::from_raw(sites.len());
     sites.push(CompiledSite {
         file_id: span.file_id.as_u32(),
         start: span.range.start().into(),
@@ -374,7 +394,7 @@ fn site(
 
 struct Emitter<'a, 'db> {
     types: &'a [NativeType],
-    callees: &'a HashMap<FunctionRef<'db>, usize>,
+    callees: &'a HashMap<FunctionRef<'db>, CallTarget>,
     initialized: Vec<bool>,
     direct: &'a HashMap<FunctionRef<'db>, crate::direct::Target>,
     resumable: bool,
@@ -540,7 +560,7 @@ impl<'db> Emitter<'_, 'db> {
                         .collect::<Result<Vec<_>>>()?
                         .join(", ");
                     format!(
-                        "self.waiting = Some({}); return Ok(CompiledAction::Call {{ target: {target}, args: vec![{args}] }});",
+                        "self.waiting = Some({}); return Ok(CompiledAction::Call {{ target: CallTarget::from_raw({target}), args: vec![{args}] }});",
                         block.0
                     )
                 }

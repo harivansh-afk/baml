@@ -4,6 +4,7 @@ use bex_vm_types::{
     GlobalIndex, Object, RealizedTy, StackIndex, Value,
     compiled::{
         CompiledAction, CompiledCode, CompiledFrame, CompiledHeap, CompiledRuntime, ResumeInput,
+        SiteId,
     },
     errors::{VmInternalError, VmPanic, VmRustFnError},
     int::Int63,
@@ -77,8 +78,8 @@ impl CompiledRuntime for BexVm {
 
     fn enter_direct(
         &mut self,
-        caller_site: usize,
-        global: usize,
+        caller_site: SiteId,
+        global: GlobalIndex,
         code: &'static CompiledCode,
         args: &[Value],
     ) -> Result<(), VmRustFnError> {
@@ -96,15 +97,15 @@ impl CompiledRuntime for BexVm {
         if !matches!(caller.execution, FrameExecution::Active) {
             return Err(invalid("direct call requires an active generated body").into());
         }
-        caller.faulting_pc = caller_site;
-        self.cur_pc = caller_site;
+        caller.faulting_pc = caller_site.raw();
+        self.cur_pc = caller_site.raw();
         if self.frames.len() >= MAX_FRAMES {
             return Err(VmPanic::StackOverflow.into());
         }
         let value = self
             .globals
             .as_slice(self.proof())
-            .get(global)
+            .get(global.raw())
             .copied()
             .ok_or_else(|| invalid("direct callee global is absent"))?;
         let pointer = value
@@ -148,7 +149,7 @@ impl CompiledRuntime for BexVm {
                     callee,
                     pointer,
                     actual_caller,
-                    u32::try_from(caller_site).unwrap_or(u32::MAX),
+                    u32::try_from(caller_site.raw()).unwrap_or(u32::MAX),
                     caller_is_observed,
                     args,
                     |caller, callee| Self::register_call_path_functions(&self.heap, caller, callee),
@@ -203,7 +204,7 @@ impl CompiledRuntime for BexVm {
         Ok(())
     }
 
-    fn fail_direct(&mut self, code: &'static CompiledCode, site: usize) {
+    fn fail_direct(&mut self, code: &'static CompiledCode, site: SiteId) {
         let Some(Frame::Baml(frame)) = self.frames.last_mut() else {
             return;
         };
@@ -217,8 +218,8 @@ impl CompiledRuntime for BexVm {
                 std::ptr::from_ref(code),
             )
         }) {
-            frame.faulting_pc = site;
-            self.cur_pc = site;
+            frame.faulting_pc = site.raw();
+            self.cur_pc = site.raw();
         }
     }
 }
@@ -394,7 +395,7 @@ impl BexVm {
         let result = active.resume(input, &mut poll, self);
         self.early_yield = poll;
         self.settle();
-        let site = active.site();
+        let site = active.site().raw();
         let Frame::Baml(frame) = &mut self.frames[owner] else {
             unreachable!("compiled invocation remains live during its body")
         };
@@ -421,10 +422,9 @@ impl BexVm {
             CompiledAction::Call { target, args } => {
                 let slot = *code
                     .calls
-                    .get(target)
+                    .get(target.raw())
                     .ok_or_else(|| invalid("compiled call target is out of range"))?;
-                let callee =
-                    self.load_global_in(function.runtime_package, GlobalIndex::from_raw(slot));
+                let callee = self.load_global_in(function.runtime_package, slot);
                 let callee = self.as_object_ptr(callee, FunctionType::Callable.into())?;
                 let count = args.len();
                 let locals = StackIndex::from_raw(self.stack.len());
