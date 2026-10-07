@@ -7,11 +7,13 @@ use std::{fmt::Write as _, path::Path, process::Command, sync::Arc};
 use baml_compiler_diagnostics::Severity;
 use baml_compiler2_hir::{item_data::file_functions, loc::FunctionLoc};
 use baml_compiler2_mir::OptLevel;
-use baml_db::ProjectDatabase;
-use baml_db::rust::emit_module;
+use baml_db::{ProjectDatabase, rust::emit_module};
 use baml_test_support as stdlib_prefix;
 use bex_engine::{BexCallArg, BexEngine, BexExternalValue, FunctionCallContextBuilder};
 use sys_native::SysOpsExt;
+
+#[path = "support/instrument.rs"]
+mod instrument;
 
 #[derive(Clone, Copy)]
 enum Arg {
@@ -152,7 +154,7 @@ async fn calls() {
         .iter()
         .map(|n| vec![Int(*n)])
         .collect();
-    agree(
+    agree_with_coverage(
         "calls",
         source,
         &[
@@ -170,6 +172,10 @@ async fn calls() {
             ("none", vec![vec![]]),
             ("calls_none", values),
         ],
+        Coverage {
+            direct: &["step", "left", "right", "none", "pair"],
+            ..Coverage::default()
+        },
     )
     .await;
 }
@@ -283,7 +289,7 @@ fn direct_admission_requires_bounded_scalar_call_regions() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn direct_calls_preserve_stack_limits_and_error_chains() {
-    agree(
+    agree_with_coverage(
         "direct_limits",
         r#"
         function leaf(x: int) -> int { 10 / x }
@@ -309,13 +315,18 @@ async fn direct_calls_preserve_stack_limits_and_error_chains() {
                 ],
             ),
         ],
+        Coverage {
+            fallback: &["caught"],
+            direct: &["leaf", "middle"],
+            ..Coverage::default()
+        },
     )
     .await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn mixed_calls_and_errors() {
-    agree(
+    agree_with_coverage(
         "mixed_calls",
         r#"
         function compiled(x: int) -> int { x * 3 }
@@ -345,6 +356,11 @@ async fn mixed_calls_and_errors() {
             ("caught", vec![vec![Int(0)], vec![Int(2)]]),
             ("fail", vec![vec![Int(0)]]),
         ],
+        Coverage {
+            fallback: &["interpreted", "caught"],
+            native: &["compiled"],
+            ..Coverage::default()
+        },
     )
     .await;
 }
@@ -401,7 +417,7 @@ async fn integer_arrays_share_identity_and_match_errors() {
             args
         })
         .collect();
-    agree_with_compiled(
+    agree_with_coverage(
         "integer_arrays",
         source,
         &[
@@ -446,23 +462,26 @@ async fn integer_arrays_share_identity_and_match_errors() {
             ),
             ("returns_alias", vec![vec![Int(5)]]),
         ],
-        &[
-            "make",
-            "identity",
-            "copy_edges",
-            "equal",
-            "unequal",
-            "empty",
-            "read",
-            "write",
-            "alias",
-            "rebind",
-            "keeps_binding",
-            "distinct",
-            "sum",
-            "rhs_first",
-            "returns_alias",
-        ],
+        Coverage {
+            native: &[
+                "make",
+                "identity",
+                "copy_edges",
+                "equal",
+                "unequal",
+                "empty",
+                "read",
+                "write",
+                "alias",
+                "rebind",
+                "keeps_binding",
+                "distinct",
+                "sum",
+                "rhs_first",
+                "returns_alias",
+            ],
+            ..Coverage::default()
+        },
     )
     .await;
 }
@@ -483,14 +502,37 @@ fn unsupported_heap_types_and_iterators_keep_bytecode() {
 }
 
 async fn agree(test: &str, source: &str, cases: &[(&str, Vec<Vec<Arg>>)]) {
-    agree_with_compiled(test, source, cases, &[]).await;
+    agree_with_coverage(test, source, cases, Coverage::default()).await;
 }
 
-async fn agree_with_compiled(
+#[tokio::test]
+#[should_panic(expected = "skipped unexpectedly fell back")]
+async fn one_native_function_cannot_hide_another_cases_fallback() {
+    agree(
+        "coverage_guard",
+        r#"
+        function kept() -> int { 1 }
+        function skipped() -> int { let text = "bytecode"; text.length() }
+        "#,
+        &[("kept", vec![vec![]]), ("skipped", vec![vec![]])],
+    )
+    .await;
+}
+
+/// Every case must enter its native frame unless explicitly listed as fallback.
+/// Helpers can additionally require native or specifically direct execution.
+#[derive(Default)]
+struct Coverage<'a> {
+    fallback: &'a [&'a str],
+    native: &'a [&'a str],
+    direct: &'a [&'a str],
+}
+
+async fn agree_with_coverage(
     test: &str,
     source: &str,
     cases: &[(&str, Vec<Vec<Arg>>)],
-    required: &[&str],
+    coverage: Coverage<'_>,
 ) {
     let db = checked_db(source);
     let image = linked(&db);
@@ -500,15 +542,38 @@ async fn agree_with_compiled(
         "test never exercises generated code"
     );
     let callables = image.program.rendered_callables();
-    let mut required_frames = Vec::new();
-    for name in required {
+    for name in coverage.fallback {
+        let object = callables[&format!("user.{name}")].object.raw();
+        assert!(
+            !module.compiled.contains(&object),
+            "{name} must exercise bytecode fallback"
+        );
+    }
+    let mut required_entries = Vec::new();
+    let required = cases
+        .iter()
+        .map(|(name, _)| *name)
+        .filter(|name| !coverage.fallback.contains(name))
+        .map(|name| (name, "resume"))
+        .chain(coverage.native.iter().map(|name| (*name, "native")))
+        .chain(coverage.direct.iter().map(|name| (*name, "direct")));
+    for (name, entry) in required {
         let object = callables[&format!("user.{name}")].object.raw();
         assert!(
             module.compiled.contains(&object),
             "{name} unexpectedly fell back: {:?}",
             module.fallback
         );
-        required_frames.push(format!("::Frame{object}"));
+        if entry == "direct" {
+            assert!(
+                module
+                    .direct_calls
+                    .iter()
+                    .any(|support| support.function == name && support.eligible),
+                "{name} lost direct-call admission"
+            );
+        }
+        required_entries.push((object, entry, name));
     }
     let engine = Arc::new(
         BexEngine::new(
@@ -545,15 +610,9 @@ async fn agree_with_compiled(
             let _ = writeln!(calls, "(\"user.{name}\", \"{label}\", &[{args}]),");
         }
     }
-    let instrumented = module.source.replace(
-        "-> Result<CompiledAction, VmRustFnError> {",
-        "-> Result<CompiledAction, VmRustFnError> { EXECUTIONS.lock().unwrap().insert(std::any::type_name::<Self>());",
-    );
-    let instrumented = format!(
-        "pub static EXECUTIONS: std::sync::Mutex<std::collections::BTreeSet<&'static str>> = std::sync::Mutex::new(std::collections::BTreeSet::new());\n{instrumented}"
-    );
+    let instrumented = instrument::source(&module.source);
     let native = format!(
-        "mod generated {{\n{instrumented}\n}}\n{HARNESS}\nstatic CASES: &[(&str, &str, &[Input])] = &[{calls}];\nstatic REQUIRED: &[&str] = &{required_frames:?};\n",
+        "mod generated {{\n{instrumented}\n}}\n{HARNESS}\nstatic CASES: &[(&str, &str, &[Input])] = &[{calls}];\nstatic REQUIRED: &[(usize, &str, &str)] = &{required_entries:?};\n",
     );
     let actual = build_and_run(test, &native, &borsh::to_vec(&image.program).unwrap());
     let actual: Vec<_> = actual.lines().collect();
@@ -597,8 +656,14 @@ async fn main() {
     }
     let executed = generated::EXECUTIONS.lock().unwrap();
     assert!(!executed.is_empty(), "compiled bodies were never executed");
-    for expected in REQUIRED {
-        assert!(executed.iter().any(|frame| frame.ends_with(expected)), "required compiled function never executed: {expected}");
+    for &(object, entry, name) in REQUIRED {
+        let reached = match entry {
+            "resume" => executed.contains(&(object, false)),
+            "direct" => executed.contains(&(object, true)),
+            "native" => executed.contains(&(object, false)) || executed.contains(&(object, true)),
+            _ => unreachable!("known test entry shape"),
+        };
+        assert!(reached, "required {entry} entry never executed: {name}");
     }
 }
 "#;
@@ -666,17 +731,20 @@ fn build_and_run(test: &str, main: &str, program: &[u8]) -> String {
         "generated Rust did not build:\n{}\n{main}",
         String::from_utf8_lossy(&build.stderr)
     );
-    let run = Command::new(target.join("debug").join(format!("rust_backend_{test}")))
-        .env(
-            "BAML_TELEMETRY",
-            if test == "engine_contract" {
-                "high"
-            } else {
-                "off"
-            },
-        )
-        .output()
-        .unwrap();
+    let run = Command::new(target.join("debug").join(format!(
+        "rust_backend_{test}{}",
+        std::env::consts::EXE_SUFFIX
+    )))
+    .env(
+        "BAML_TELEMETRY",
+        if test == "engine_contract" {
+            "high"
+        } else {
+            "off"
+        },
+    )
+    .output()
+    .unwrap();
     assert!(
         run.status.success(),
         "generated program failed:\n{}",
@@ -817,12 +885,9 @@ fn generated_code_preserves_engine_contract() {
             "{name} did not get direct code"
         );
     }
-    let instrumented = module.source.replace(
-        "runtime.enter_direct(",
-        "DIRECT_ENTRIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed); runtime.enter_direct(",
-    );
+    let instrumented = instrument::source(&module.source);
     let native = format!(
-        "mod generated {{\npub static DIRECT_ENTRIES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);\n{instrumented}\n}}\nconst BAML: &str = {source:?};\n{}",
+        "mod generated {{\n{instrumented}\n}}\nconst BAML: &str = {source:?};\n{}",
         include_str!("support/engine_contract.rs")
     );
     assert_eq!(
@@ -927,12 +992,9 @@ fn direct_regions_charge_polling_without_suspending_direct_frames() {
                 .any(|f| f.function == name && f.eligible)
         );
     }
-    let instrumented = module.source.replace(
-        "runtime.enter_direct(",
-        "DIRECT_ENTRIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed); runtime.enter_direct(",
-    );
+    let instrumented = instrument::source(&module.source);
     let main = format!(
-        "mod generated {{\npub static DIRECT_ENTRIES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);\n{instrumented}\n}}\n{}",
+        "mod generated {{\n{instrumented}\n}}\n{}",
         include_str!("support/poll_contract.rs"),
     );
     assert_eq!(

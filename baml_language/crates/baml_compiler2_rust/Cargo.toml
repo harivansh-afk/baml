@@ -31,5 +31,8 @@ sys_native = { workspace = true, features = [ "bundle-http", "ring-crypto" ] }
 sys_ops = { workspace = true }
 sys_types = { workspace = true }
 borsh = { workspace = true }
+prettyplease = { workspace = true }
+quote = { workspace = true }
+syn = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = [ "macros", "rt-multi-thread" ] }
