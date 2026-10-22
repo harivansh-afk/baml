@@ -8,17 +8,21 @@ use crate::{
 };
 
 impl BexVm {
-    /// Read a global initialized by the owning package's `$init`.
+    /// Read a global initialized by the owning package's `$init`. A program
+    /// global whose initializer has not run yet fails as `LoadGlobal` does.
     #[inline]
-    #[must_use]
-    pub fn load_global(&self, function: HeapPtr, index: usize) -> Value {
+    pub fn load_global(&self, function: HeapPtr, index: usize) -> Result<Value, Box<VmError>> {
         let Object::Function(function) = self.get_object(function) else {
             unreachable!("compiled code names its own function object");
         };
-        self.load_global_in(
-            self.runtime_package_of(function),
-            GlobalIndex::from_raw(index),
-        )
+        let package = self.runtime_package_of(function);
+        let slot = GlobalIndex::from_raw(index);
+        if package.is_null() && self.global_is_pending(slot) {
+            return Err(Box::new(
+                VmInternalError::GlobalReadBeforeInit { slot }.into(),
+            ));
+        }
+        Ok(self.load_global_in(package, slot))
     }
 
     /// Return `Package.current` for the linked package ordinal.
@@ -93,7 +97,10 @@ mod tests {
         bytecode::Bytecode, types::ConstValue,
     };
 
-    use crate::vm::tests::{native_function_object, test_vm};
+    use crate::{
+        errors::{VmError, VmInternalError},
+        vm::tests::{native_function_object, test_vm},
+    };
 
     // The loader leaves type and literal constants unresolved.
     fn function_with(constants: Vec<ConstValue>) -> Object {
@@ -157,6 +164,23 @@ mod tests {
         let mut vm = test_vm(vec![function_with(Vec::new())]);
         vm.globals = VmGlobals::Owned(GlobalPool::from_vec(vec![Value::int(3), Value::int(9)]));
         let function = vm.idx_to_ptr(ObjectIndex::from_raw(0));
-        assert_eq!(vm.load_global(function, 1), Value::int(9));
+        assert_eq!(vm.load_global(function, 1).unwrap(), Value::int(9));
+    }
+
+    #[test]
+    fn a_global_read_before_its_initializer_fails_as_load_global_does() {
+        let mut vm = test_vm(vec![function_with(Vec::new())]);
+        vm.globals = VmGlobals::Owned(GlobalPool::from_vec(vec![Value::int(3), Value::NULL]));
+        vm.pending_globals = Some(Box::new([false, true]));
+        let function = vm.idx_to_ptr(ObjectIndex::from_raw(0));
+        assert_eq!(vm.load_global(function, 0).unwrap(), Value::int(3));
+        let error = vm.load_global(function, 1).unwrap_err();
+        assert!(
+            matches!(
+                *error,
+                VmError::InternalError(VmInternalError::GlobalReadBeforeInit { .. })
+            ),
+            "{error:?}"
+        );
     }
 }

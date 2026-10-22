@@ -163,6 +163,7 @@ impl BexVm {
             Some(std::sync::Arc::<str>::from(name.as_str()))
         };
         let at = Self::record_frame(frame);
+        frame.note_pc(pc);
         self.record_log_at(at, level, name.clone(), data);
         let source_location = self
             .get_object(frame.function())
@@ -170,7 +171,6 @@ impl BexVm {
             .ok()
             .and_then(|function| function.bytecode.line_entry_for_pc(pc as usize))
             .map(Self::event_source_location_for_line_entry);
-        frame.note_pc(pc);
         self.suspend(Step::Log {
             level,
             event_name: name,
@@ -199,7 +199,7 @@ impl BexVm {
         self.check_compiled_call()?;
         if self.telemetry.is_some() {
             if type_args.is_empty() {
-                return self.call_compiled_cold(caller, callee, body, args);
+                return self.call_compiled_observed(caller, callee, body, args);
             }
             return self.call_compiled_funnelled(callee, type_args, args);
         }
@@ -300,18 +300,6 @@ impl BexVm {
         result
     }
 
-    #[cold]
-    #[inline(never)]
-    fn call_compiled_cold(
-        &mut self,
-        caller: &FrameRecord,
-        callee: HeapPtr,
-        body: CompiledFn,
-        args: &[Value],
-    ) -> Result<Value, Box<VmError>> {
-        self.call_compiled_observed(caller, callee, body, args)
-    }
-
     /// Enter a plain compiled callee with telemetry, falling back to the VM call path when needed.
     ///
     /// For a plain callee everything the call path looks up is known: the call
@@ -320,6 +308,7 @@ impl BexVm {
     /// the invocation with those facts, pushes the frame with its telemetry,
     /// runs the body, and completes the invocation as the call path does. An
     /// error leaves the frame for the unwinder, which completes it.
+    #[cold]
     #[inline(never)]
     #[allow(unsafe_code)]
     fn call_compiled_observed(

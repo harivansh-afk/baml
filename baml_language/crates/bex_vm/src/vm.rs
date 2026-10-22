@@ -2959,18 +2959,19 @@ impl BexVm {
         // SAFETY: SendEvent executes under the heap permit and roots its frame.
         let (_, function) =
             unsafe { Self::register_call_path_functions(&self.heap, None, function) };
+        // A compiled frame's own reported position, as for its call sites;
+        // `cur_pc` belongs to the interpreter.
+        let idx = match frame {
+            FrameAt::Vm(idx) => idx,
+            FrameAt::Record(_) => self.frames.len().saturating_sub(1),
+        };
+        let pc = self.caller_pc(frame, idx, self.cur_pc);
         let context = self.current_context().clone();
         let state = self.telemetry.as_mut().unwrap();
         state.set_context(context);
         // SAFETY: neither capture nor publication releases the VM heap permit.
         unsafe {
-            state.record_log(
-                function,
-                u32::try_from(self.cur_pc).unwrap_or(u32::MAX),
-                level,
-                name,
-                data,
-            );
+            state.record_log(function, pc, level, name, data);
         }
     }
 
@@ -3351,7 +3352,7 @@ impl BexVm {
             };
             if self.compiled_at(depth).is_some() {
                 innermost_bc = false;
-                contexts.extend(self.compiled_cause(depth));
+                contexts.extend(self.frame_cause(FrameAt::Vm(depth)));
                 continue;
             }
             let pc = if innermost_bc {
@@ -6919,7 +6920,7 @@ impl BexVm {
             };
             if self.compiled_at(depth).is_some() {
                 innermost_bc = false;
-                if let Some(context) = self.compiled_cause(depth) {
+                if let Some(context) = self.frame_cause(FrameAt::Vm(depth)) {
                     return context;
                 }
                 continue;

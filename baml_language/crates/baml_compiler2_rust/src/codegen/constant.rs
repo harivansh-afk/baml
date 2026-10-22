@@ -67,7 +67,7 @@ impl<'db> Generator<'_, 'db> {
                 };
                 Expr::new(
                     format!(
-                        "vm.load_global(vm.record_object(fr, ObjectIndex::from_raw({})), {slot})",
+                        "vm.load_global(vm.record_object(fr, ObjectIndex::from_raw({})), {slot})?",
                         self.object
                     ),
                     Repr::Value,
