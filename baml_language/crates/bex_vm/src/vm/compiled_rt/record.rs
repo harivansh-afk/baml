@@ -830,12 +830,8 @@ impl BexVm {
         &self,
         frame: FrameAt,
     ) -> Result<&'static Function, crate::errors::VmInternalError> {
-        match frame {
-            // SAFETY: forwarded to the caller.
-            FrameAt::Vm(idx) => unsafe { self.load_function(idx) },
-            // SAFETY: forwarded to the caller.
-            FrameAt::Record(record) => unsafe { self.load_callable(record_ref(record).function()) },
-        }
+        // SAFETY: forwarded to the caller.
+        unsafe { self.load_callable(self.frame_callable(frame)) }
     }
 
     /// The telemetry receipt of `frame`.
@@ -919,16 +915,20 @@ impl BexVm {
 
     /// The error context a compiled frame is handling, from its cause slot.
     pub(crate) fn frame_cause(&self, frame: FrameAt) -> Option<Value> {
-        match frame {
-            FrameAt::Vm(idx) => self.compiled_cause(idx),
-            FrameAt::Record(record) => {
-                let record = record_ref(record);
-                let function = self.get_object(record.function()).as_callable().ok()?;
-                let slot = function.compiled_body?.cause_slot()?;
-                let context = *self.stack.0.get(record.base() + slot as usize)?;
-                (!context.is_null()).then_some(context)
-            }
-        }
+        let base = match frame {
+            FrameAt::Vm(idx) => match &self.frames[idx] {
+                Frame::Bytecode(frame) => frame.locals_offset.raw(),
+                Frame::Native(_) => return None,
+            },
+            FrameAt::Record(record) => record_ref(record).base(),
+        };
+        let function = self
+            .get_object(self.frame_callable(frame))
+            .as_callable()
+            .ok()?;
+        let slot = function.compiled_body?.cause_slot()?;
+        let context = *self.stack.0.get(base + slot as usize)?;
+        (!context.is_null()).then_some(context)
     }
 
     /// The frame a compiled body's record stands for.

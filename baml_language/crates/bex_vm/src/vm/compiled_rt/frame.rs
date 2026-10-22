@@ -392,20 +392,6 @@ impl BexVm {
         })
     }
 
-    /// Return the error context used to chain errors raised in the current handler.
-    pub(crate) fn compiled_cause(&self, idx: usize) -> Option<Value> {
-        let Frame::Bytecode(frame) = &self.frames[idx] else {
-            return None;
-        };
-        let function = self.get_object(frame.function).as_callable().ok()?;
-        let slot = function.compiled_body?.cause_slot()?;
-        let context = *self
-            .stack
-            .0
-            .get(frame.locals_offset.raw() + slot as usize)?;
-        (!context.is_null()).then_some(context)
-    }
-
     /// Resolve a caller's call site across compiled frames and native continuations.
     pub(crate) fn caller_pc(&self, caller: FrameAt, frame_idx: usize, call_site: usize) -> u32 {
         if self.frame_runs_compiled(caller) {
